@@ -60,8 +60,31 @@ function getLogoUrl(domain: string, size: number = 64): string {
   return `https://img.logo.dev/${domain}?token=${LOGO_API_KEY}&size=${size}&format=png`;
 }
 
-const CHROMIUM_PACK_URL =
-  'https://github.com/Sparticuz/chromium/releases/download/v131.0.0/chromium-v131.0.0-pack.tar';
+const CHROMIUM_PACK_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/chromium-pack.tar`
+  : 'https://github.com/Sparticuz/chromium/releases/download/v141.0.0/chromium-v141.0.0-pack.tar';
+
+let cachedExecutablePath: string | null = null;
+let downloadPromise: Promise<string> | null = null;
+
+async function getChromiumPath(): Promise<string> {
+  if (cachedExecutablePath) return cachedExecutablePath;
+
+  if (!downloadPromise) {
+    downloadPromise = chromium
+      .executablePath(CHROMIUM_PACK_URL)
+      .then((path) => {
+        cachedExecutablePath = path;
+        return path;
+      })
+      .catch((error) => {
+        downloadPromise = null;
+        throw error;
+      });
+  }
+
+  return downloadPromise;
+}
 
 async function launchBrowser() {
   const isLocal = !process.env.VERCEL;
@@ -74,13 +97,12 @@ async function launchBrowser() {
     });
   }
 
-  chromium.setGraphicsMode = false;
+  const executablePath = await getChromiumPath();
 
   return puppeteer.launch({
     args: chromium.args,
-    defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
-    headless: chromium.headless,
+    executablePath,
+    headless: true,
   });
 }
 
