@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
+import chromium from '@sparticuz/chromium-min';
 import { PDFDocument } from 'pdf-lib';
 import sharp from 'sharp';
 import { AssetType, AssetData, InvoiceData, ReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../types.js';
@@ -60,15 +60,27 @@ function getLogoUrl(domain: string, size: number = 64): string {
   return `https://img.logo.dev/${domain}?token=${LOGO_API_KEY}&size=${size}&format=png`;
 }
 
+const CHROMIUM_PACK_URL =
+  'https://github.com/Sparticuz/chromium/releases/download/v131.0.0/chromium-v131.0.0-pack.tar';
+
 async function launchBrowser() {
   const isLocal = !process.env.VERCEL;
+
+  if (isLocal) {
+    return puppeteer.launch({
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      headless: true,
+    });
+  }
+
+  chromium.setGraphicsMode = false;
+
   return puppeteer.launch({
-    args: isLocal ? ['--no-sandbox', '--disable-setuid-sandbox'] : chromium.args,
-    defaultViewport: isLocal ? null : chromium.defaultViewport,
-    executablePath: isLocal
-      ? process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-      : await chromium.executablePath(),
-    headless: true,
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
+    headless: chromium.headless,
   });
 }
 
