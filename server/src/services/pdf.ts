@@ -1,4 +1,5 @@
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { PDFDocument } from 'pdf-lib';
 import sharp from 'sharp';
 import { AssetType, AssetData, InvoiceData, ReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../types.js';
@@ -59,13 +60,22 @@ function getLogoUrl(domain: string, size: number = 64): string {
   return `https://img.logo.dev/${domain}?token=${LOGO_API_KEY}&size=${size}&format=png`;
 }
 
-export async function generatePdf(type: AssetType, data: AssetData, currency: string = 'USD'): Promise<Buffer> {
-  const html = generateHtml(type, data, currency);
-  
-  const browser = await puppeteer.launch({
+async function launchBrowser() {
+  const isLocal = !process.env.VERCEL;
+  return puppeteer.launch({
+    args: isLocal ? ['--no-sandbox', '--disable-setuid-sandbox'] : chromium.args,
+    defaultViewport: isLocal ? null : chromium.defaultViewport,
+    executablePath: isLocal
+      ? process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      : await chromium.executablePath(),
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
+}
+
+export async function generatePdf(type: AssetType, data: AssetData, currency: string = 'USD', primaryColor?: string): Promise<Buffer> {
+  const html = generateHtml(type, data, currency, primaryColor);
+  
+  const browser = await launchBrowser();
   
   try {
     const page = await browser.newPage();
@@ -132,13 +142,10 @@ function getDocumentIdentifier(type: AssetType, data: AssetData): string {
   }
 }
 
-export async function generateJpg(type: AssetType, data: AssetData, currency: string = 'USD'): Promise<Buffer> {
-  const html = generateHtml(type, data, currency);
+export async function generateJpg(type: AssetType, data: AssetData, currency: string = 'USD', primaryColor?: string): Promise<Buffer> {
+  const html = generateHtml(type, data, currency, primaryColor);
   
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
+  const browser = await launchBrowser();
   
   try {
     const page = await browser.newPage();
@@ -186,10 +193,35 @@ function formatCurrencyAmount(amount: number, currency: string = 'USD'): string 
   return `${info.symbol}${formatted}`;
 }
 
-function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'): string {
+function hexToRgb(hex: string): [number, number, number] {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return [61, 61, 61];
+  return [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function getLighterHex(rgb: [number, number, number], amount: number = 0.92): string {
+  const lighten = (c: number) => Math.round(c + (255 - c) * amount);
+  return rgbToHex(lighten(rgb[0]), lighten(rgb[1]), lighten(rgb[2]));
+}
+
+function getRgba(rgb: [number, number, number], opacity: number): string {
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${opacity})`;
+}
+
+function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD', primaryColor?: string): string {
   // Helper to format currency with the correct symbol
   const formatCurrency = (amount: number): string => formatCurrencyAmount(amount, currency);
   
+  // Derive accent colors from vendor logo color (matching client-side logic)
+  const accentRgb = primaryColor ? hexToRgb(primaryColor) : null;
+  const accentColor = primaryColor || '#3D3D3D';
+  const accentBgColor = accentRgb ? getLighterHex(accentRgb, 0.92) : '#F4F3EF';
+  const accentBorderColor = accentRgb ? getRgba(accentRgb, 0.3) : '#E0DDD8';
+
   // Ramp brand colors
   const colors = {
     slate: '#3D3D3D',
@@ -201,6 +233,9 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
     solar: '#E4F222',
     rust: '#924F35',
     white: '#FFFFFF',
+    accent: accentColor,
+    accentBg: accentBgColor,
+    accentBorder: accentBorderColor,
   };
 
   const styles = `
@@ -235,12 +270,12 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
         height: 64px;
         object-fit: contain;
         border-radius: 8px;
-        border: 2px solid ${colors.stone};
+        border: 2px solid ${colors.accentBorder};
       }
       .vendor-name { 
         font-size: 24px; 
         font-weight: 700; 
-        color: ${colors.slate};
+        color: ${colors.accent};
         margin-bottom: 4px;
       }
       .vendor-details {
@@ -254,7 +289,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
       .document-title { 
         font-size: 24px; 
         font-weight: 700; 
-        color: ${colors.slate};
+        color: ${colors.accent};
         margin-bottom: 4px;
       }
       .document-meta { 
@@ -264,7 +299,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
       }
       .document-ref {
         font-size: 12px;
-        color: ${colors.spring};
+        color: ${colors.accent};
         margin-top: 8px;
       }
       
@@ -273,7 +308,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
         font-size: 12px; 
         text-transform: uppercase; 
         letter-spacing: 0.05em;
-        color: ${colors.slate}; 
+        color: ${colors.accent}; 
         margin-bottom: 8px; 
         font-weight: 600; 
       }
@@ -307,19 +342,19 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
         margin-bottom: 32px; 
       }
       th { 
-        background: ${colors.sand}; 
+        background: ${colors.accentBg}; 
         padding: 12px; 
         text-align: left; 
         font-size: 12px; 
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        color: ${colors.slate}; 
+        color: ${colors.accent}; 
         font-weight: 600; 
       }
       th.text-right { text-align: right; }
       td { 
         padding: 12px; 
-        border-bottom: 1px solid ${colors.stone};
+        border-bottom: 1px solid ${colors.accentBorder};
         color: ${colors.slate};
         font-size: 14px;
       }
@@ -338,7 +373,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
         display: flex; 
         justify-content: space-between; 
         padding: 8px 0; 
-        border-bottom: 1px solid ${colors.stone}; 
+        border-bottom: 1px solid ${colors.accentBorder}; 
       }
       .totals-row .label { color: ${colors.gray600}; }
       .totals-row .value { color: ${colors.slate}; }
@@ -346,7 +381,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
         font-weight: 700; 
         font-size: 18px; 
         border-bottom: none; 
-        border-top: 2px solid ${colors.slate}; 
+        border-top: 2px solid ${colors.accent}; 
         margin-top: 8px; 
         padding-top: 12px; 
       }
@@ -362,15 +397,15 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
       }
       .info-box { 
         padding: 16px; 
-        background: ${colors.sand}; 
+        background: ${colors.accentBg}; 
         border-radius: 8px;
-        border: 1px solid ${colors.stone};
+        border: 1px solid ${colors.accentBorder};
       }
       .info-box .label {
         font-size: 12px; 
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        color: ${colors.slate}; 
+        color: ${colors.accent}; 
         margin-bottom: 8px; 
         font-weight: 600;
       }
@@ -395,7 +430,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
       }
       .terms-list li { 
         padding: 8px 0; 
-        border-bottom: 1px solid ${colors.stone};
+        border-bottom: 1px solid ${colors.accentBorder};
         font-size: 14px;
       }
       .terms-list li:last-child { 
@@ -410,7 +445,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
         flex: 1; 
       }
       .signature-line { 
-        border-bottom: 1px solid ${colors.slate}; 
+        border-bottom: 1px solid ${colors.accent}; 
         height: 48px; 
         margin-bottom: 8px; 
       }
@@ -446,9 +481,9 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
     case 'contract':
       return generateContractHtml(data as ContractData, styles, formatCurrency);
     case 'hotel_folio':
-      return generateHotelFolioHtml(data as HotelFolioData, styles, formatCurrency);
+      return generateHotelFolioHtml(data as HotelFolioData, styles, formatCurrency, colors);
     case 'airline_receipt':
-      return generateAirlineReceiptHtml(data as AirlineReceiptData, styles, formatCurrency);
+      return generateAirlineReceiptHtml(data as AirlineReceiptData, styles, formatCurrency, colors);
     case 'paper_receipt':
       // Paper receipts use the same receipt HTML for export
       return generateReceiptHtml(data as ReceiptData, styles, formatCurrency);
@@ -802,7 +837,7 @@ function generateContractHtml(data: ContractData, styles: string, formatCurrency
   `;
 }
 
-function generateHotelFolioHtml(data: HotelFolioData, styles: string, formatCurrency: (amount: number) => string): string {
+function generateHotelFolioHtml(data: HotelFolioData, styles: string, formatCurrency: (amount: number) => string, colors: Record<string, string>): string {
   const logoUrl = data.hotel.domain ? getLogoUrl(data.hotel.domain, 64) : '';
   
   // Group charges by category
@@ -819,44 +854,44 @@ function generateHotelFolioHtml(data: HotelFolioData, styles: string, formatCurr
           display: flex; 
           justify-content: space-between; 
           padding-bottom: 20px; 
-          border-bottom: 3px solid #1a365d; 
+          border-bottom: 3px solid ${colors.accent}; 
           margin-bottom: 24px; 
         }
         .hotel-info { display: flex; gap: 16px; align-items: flex-start; }
         .hotel-logo { width: 64px; height: 64px; object-fit: contain; }
-        .hotel-name { font-size: 24px; font-weight: bold; color: #1a365d; }
+        .hotel-name { font-size: 24px; font-weight: bold; color: ${colors.accent}; }
         .hotel-brand { font-size: 12px; color: #787868; }
         .hotel-details { font-size: 12px; color: #3D3D3D; margin-top: 8px; }
-        .folio-title { font-size: 20px; font-weight: bold; color: #1a365d; text-align: right; }
+        .folio-title { font-size: 20px; font-weight: bold; color: ${colors.accent}; text-align: right; }
         .folio-meta { font-size: 12px; color: #3D3D3D; margin-top: 4px; text-align: right; }
         .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-        .info-box { background: #f7fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; }
-        .info-box-title { font-size: 11px; font-weight: 600; color: #1a365d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+        .info-box { background: ${colors.accentBg}; padding: 16px; border-radius: 8px; border: 1px solid ${colors.accentBorder}; }
+        .info-box-title { font-size: 11px; font-weight: 600; color: ${colors.accent}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
         .guest-name { font-weight: 600; color: #3D3D3D; }
         .guest-email { font-size: 12px; color: #787868; }
-        .loyalty-badge { display: inline-block; font-size: 10px; padding: 2px 8px; background: #1a365d; color: white; border-radius: 12px; margin-top: 8px; }
+        .loyalty-badge { display: inline-block; font-size: 10px; padding: 2px 8px; background: ${colors.accent}; color: white; border-radius: 12px; margin-top: 8px; }
         .stay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 12px; }
         .stay-label { color: #787868; }
         .stay-value { font-weight: 600; color: #3D3D3D; }
         .charges-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 24px; }
-        .charges-table th { background: #f7fafc; color: #1a365d; font-weight: 600; padding: 10px; text-align: left; }
+        .charges-table th { background: ${colors.accentBg}; color: ${colors.accent}; font-weight: 600; padding: 10px; text-align: left; }
         .charges-table th:last-child { text-align: right; }
-        .charges-table td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
+        .charges-table td { padding: 10px; border-bottom: 1px solid ${colors.accentBorder}; }
         .charges-table td:last-child { text-align: right; }
-        .category-header { background: #f1f5f9; font-weight: 600; color: #3D3D3D; }
-        .subtotal-row { background: #f7fafc; font-weight: 600; }
-        .summary-box { width: 320px; margin-left: auto; background: #f7fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; }
+        .category-header { background: ${colors.accentBg}; font-weight: 600; color: #3D3D3D; }
+        .subtotal-row { background: ${colors.accentBg}; font-weight: 600; }
+        .summary-box { width: 320px; margin-left: auto; background: ${colors.accentBg}; padding: 16px; border-radius: 8px; border: 1px solid ${colors.accentBorder}; }
         .summary-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px; }
         .summary-label { color: #787868; }
         .summary-value { color: #3D3D3D; }
-        .summary-total { display: flex; justify-content: space-between; font-size: 18px; font-weight: bold; color: #1a365d; padding-top: 12px; border-top: 2px solid #1a365d; margin-top: 12px; }
-        .payment-box { background: #f7fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; margin: 24px 0; display: flex; justify-content: space-between; align-items: center; }
-        .payment-label { font-size: 11px; font-weight: 600; color: #1a365d; text-transform: uppercase; }
+        .summary-total { display: flex; justify-content: space-between; font-size: 18px; font-weight: bold; color: ${colors.accent}; padding-top: 12px; border-top: 2px solid ${colors.accent}; margin-top: 12px; }
+        .payment-box { background: ${colors.accentBg}; padding: 16px; border-radius: 8px; border: 1px solid ${colors.accentBorder}; margin: 24px 0; display: flex; justify-content: space-between; align-items: center; }
+        .payment-label { font-size: 11px; font-weight: 600; color: ${colors.accent}; text-transform: uppercase; }
         .payment-details { font-size: 12px; color: #3D3D3D; }
-        .payment-amount { font-size: 20px; font-weight: bold; color: #1a365d; }
-        .points-earned { text-align: center; background: #f7fafc; padding: 12px; border-radius: 8px; margin: 16px 0; font-size: 12px; }
-        .points-value { font-weight: 600; color: #1a365d; }
-        .folio-footer { text-align: center; font-size: 10px; color: #787868; padding-top: 16px; border-top: 1px solid #e2e8f0; margin-top: 24px; }
+        .payment-amount { font-size: 20px; font-weight: bold; color: ${colors.accent}; }
+        .points-earned { text-align: center; background: ${colors.accentBg}; padding: 12px; border-radius: 8px; margin: 16px 0; font-size: 12px; }
+        .points-value { font-weight: 600; color: ${colors.accent}; }
+        .folio-footer { text-align: center; font-size: 10px; color: #787868; padding-top: 16px; border-top: 1px solid ${colors.accentBorder}; margin-top: 24px; }
       </style>
     </head>
     <body>
@@ -1010,7 +1045,7 @@ function generateHotelFolioHtml(data: HotelFolioData, styles: string, formatCurr
   `;
 }
 
-function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, formatCurrency: (amount: number) => string): string {
+function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, formatCurrency: (amount: number) => string, colors: Record<string, string>): string {
   const logoUrl = data.airline.domain ? getLogoUrl(data.airline.domain, 64) : '';
   
   return `
@@ -1020,7 +1055,7 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
       ${styles}
       <style>
         .airline-header { 
-          background: #0033a0; 
+          background: ${colors.accent}; 
           padding: 16px 32px; 
           display: flex; 
           justify-content: space-between; 
@@ -1034,26 +1069,26 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
         .confirmation-banner { 
           text-align: center; 
           padding-bottom: 24px; 
-          border-bottom: 2px solid #c7d2fe; 
+          border-bottom: 2px solid ${colors.accentBorder}; 
           margin-bottom: 24px; 
         }
         .trip-badge { 
           display: inline-flex; 
           align-items: center; 
           gap: 8px; 
-          background: #f0f4ff; 
+          background: ${colors.accentBg}; 
           padding: 8px 16px; 
           border-radius: 20px; 
           font-weight: 600; 
-          color: #0033a0; 
+          color: ${colors.accent}; 
           font-size: 12px;
           margin-bottom: 16px;
         }
         .confirmation-title { font-size: 28px; font-weight: bold; color: #3D3D3D; }
-        .confirmation-code { color: #0033a0; }
+        .confirmation-code { color: ${colors.accent}; }
         .ticket-number { color: #787868; font-size: 12px; margin-top: 4px; }
         .passenger-box { 
-          background: #f0f4ff; 
+          background: ${colors.accentBg}; 
           padding: 16px; 
           border-radius: 8px; 
           display: flex; 
@@ -1066,14 +1101,14 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
         .section-title { 
           font-size: 16px; 
           font-weight: 600; 
-          color: #0033a0; 
+          color: ${colors.accent}; 
           display: flex; 
           align-items: center; 
           gap: 8px; 
           margin-bottom: 16px; 
         }
         .flight-card { 
-          border: 1px solid #c7d2fe; 
+          border: 1px solid ${colors.accentBorder}; 
           border-radius: 8px; 
           padding: 20px; 
           margin-bottom: 16px; 
@@ -1083,11 +1118,11 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
           display: flex; 
           justify-content: space-between; 
           padding-bottom: 12px; 
-          border-bottom: 1px solid #c7d2fe; 
+          border-bottom: 1px solid ${colors.accentBorder}; 
           margin-bottom: 16px; 
         }
         .flight-label { font-size: 10px; color: #787868; }
-        .flight-number { font-size: 16px; font-weight: bold; color: #0033a0; }
+        .flight-number { font-size: 16px; font-weight: bold; color: ${colors.accent}; }
         .flight-date { font-weight: 600; color: #3D3D3D; }
         .flight-route { display: flex; flex-direction: column; align-items: center; }
         .flight-route-row { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; }
@@ -1098,7 +1133,7 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
         .flight-arrow { 
           width: 80px; 
           text-align: center; 
-          border-top: 2px dashed #0033a0; 
+          border-top: 2px dashed ${colors.accent}; 
           margin: 8px 8px 0 8px; 
           position: relative;
         }
@@ -1106,27 +1141,27 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
         .duration { 
           font-size: 10px; 
           color: #787868; 
-          background: #f0f4ff; 
+          background: ${colors.accentBg}; 
           padding: 4px 12px; 
           border-radius: 12px; 
           margin-top: 8px;
           display: inline-block;
         }
         .flight-times { display: flex; justify-content: space-between; width: 100%; margin-top: 12px; padding: 0 16px; }
-        .flight-time { font-size: 16px; font-weight: 600; color: #0033a0; text-align: center; flex: 1; }
+        .flight-time { font-size: 16px; font-weight: 600; color: ${colors.accent}; text-align: center; flex: 1; }
         .flight-details { 
           display: flex; 
           justify-content: center; 
           gap: 40px; 
           padding-top: 12px; 
-          border-top: 1px solid #c7d2fe; 
+          border-top: 1px solid ${colors.accentBorder}; 
           margin-top: 16px; 
           font-size: 12px;
         }
         .detail-label { font-size: 10px; color: #787868; }
         .detail-value { font-weight: 600; color: #3D3D3D; }
         .fare-box { 
-          background: #f0f4ff; 
+          background: ${colors.accentBg}; 
           padding: 20px; 
           border-radius: 8px; 
           margin-bottom: 24px; 
@@ -1144,27 +1179,27 @@ function generateAirlineReceiptHtml(data: AirlineReceiptData, styles: string, fo
           justify-content: space-between; 
           font-size: 18px; 
           font-weight: bold; 
-          color: #0033a0; 
+          color: ${colors.accent}; 
           padding-top: 12px; 
-          border-top: 2px solid #0033a0; 
+          border-top: 2px solid ${colors.accent}; 
           margin-top: 12px; 
         }
-        .payment-info { font-size: 12px; color: #787868; margin-top: 16px; padding-top: 16px; border-top: 1px solid #c7d2fe; }
+        .payment-info { font-size: 12px; color: #787868; margin-top: 16px; padding-top: 16px; border-top: 1px solid ${colors.accentBorder}; }
         .miles-box { 
           text-align: center; 
-          background: #f0f4ff; 
+          background: ${colors.accentBg}; 
           padding: 16px; 
           border-radius: 8px; 
           margin-bottom: 24px; 
         }
         .miles-label { font-size: 12px; color: #787868; }
-        .miles-value { font-size: 24px; font-weight: bold; color: #0033a0; }
+        .miles-value { font-size: 24px; font-weight: bold; color: ${colors.accent}; }
         .airline-footer { 
           text-align: center; 
           font-size: 10px; 
           color: #787868; 
           padding-top: 16px; 
-          border-top: 1px solid #c7d2fe; 
+          border-top: 1px solid ${colors.accentBorder}; 
         }
       </style>
     </head>

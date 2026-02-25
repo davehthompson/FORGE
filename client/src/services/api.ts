@@ -395,11 +395,12 @@ export async function generateAssets(
 export async function exportPdf(
   type: AssetType,
   data: AssetData,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  primaryColor?: string
 ): Promise<Blob> {
   const response = await api.post(
     '/export/pdf',
-    { type, data, currency },
+    { type, data, currency, primaryColor },
     { responseType: 'blob' }
   );
   
@@ -410,11 +411,12 @@ export async function exportPdf(
 export async function exportJpg(
   type: AssetType,
   data: AssetData,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  primaryColor?: string
 ): Promise<Blob> {
   const response = await api.post(
     '/export/jpg',
-    { type, data, currency },
+    { type, data, currency, primaryColor },
     { responseType: 'blob' }
   );
   

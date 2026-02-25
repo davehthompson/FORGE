@@ -17,8 +17,10 @@ import {
 import { Button, Card, CardContent, Logo, Badge } from '../ui';
 import { useStore } from '../../hooks/useStore';
 import { exportPdf, exportJpg, downloadBlob } from '../../services/api';
-import type { AssetType, AssetData } from '../../types';
+import type { AssetType, AssetData, InvoiceData, ReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../../types';
 import { AssetPreview } from '../Editor/AssetPreview';
+import { getLogoUrl } from '../../utils/logo';
+import { getCachedLogoColor } from '../../hooks/useLogoColors';
 
 const ASSET_ICONS: Record<AssetType, typeof FileText> = {
   invoice: FileText,
@@ -42,6 +44,33 @@ const ASSET_LABELS: Record<AssetType, string> = {
 
 // Display order for export items: Quote → Contract → Invoice → Receipts
 const ASSET_DISPLAY_ORDER: AssetType[] = ['quote', 'contract', 'invoice', 'receipt', 'paper_receipt', 'hotel_folio', 'airline_receipt'];
+
+function getVendorDomain(type: AssetType, data: AssetData): string | undefined {
+  switch (type) {
+    case 'invoice':
+      return (data as InvoiceData).vendor?.domain;
+    case 'receipt':
+    case 'paper_receipt':
+      return (data as ReceiptData).vendor?.domain;
+    case 'quote':
+      return (data as QuoteData).vendor?.domain;
+    case 'contract':
+      return (data as ContractData).parties?.provider?.domain;
+    case 'hotel_folio':
+      return (data as HotelFolioData).hotel?.domain;
+    case 'airline_receipt':
+      return (data as AirlineReceiptData).airline?.domain;
+    default:
+      return undefined;
+  }
+}
+
+function getAccentColor(type: AssetType, data: AssetData): string | undefined {
+  const domain = getVendorDomain(type, data);
+  if (!domain) return undefined;
+  const logoUrl = getLogoUrl(domain, { size: 64 });
+  return getCachedLogoColor(logoUrl)?.primary;
+}
 
 type ExportFormat = 'pdf' | 'jpg';
 
@@ -76,11 +105,12 @@ export function Export() {
     ]);
 
     try {
+      const primaryColor = getAccentColor(type, data);
       let blob: Blob;
       if (format === 'pdf') {
-        blob = await exportPdf(type, data, selectedCurrency);
+        blob = await exportPdf(type, data, selectedCurrency, primaryColor);
       } else {
-        blob = await exportJpg(type, data, selectedCurrency);
+        blob = await exportJpg(type, data, selectedCurrency, primaryColor);
       }
 
       const companyName = company?.name.replace(/\s+/g, '_') || 'company';

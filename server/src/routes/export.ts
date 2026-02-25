@@ -8,11 +8,12 @@ interface ExportRequest {
   type: AssetType;
   data: AssetData;
   currency?: string;
+  primaryColor?: string;
 }
 
 exportRouter.post('/pdf', async (req: Request<{}, {}, ExportRequest>, res: Response) => {
   try {
-    const { type, data, currency = 'USD' } = req.body;
+    const { type, data, currency = 'USD', primaryColor } = req.body;
     
     if (!type || !data) {
       return res.status(400).json({
@@ -21,7 +22,7 @@ exportRouter.post('/pdf', async (req: Request<{}, {}, ExportRequest>, res: Respo
       });
     }
     
-    const pdf = await generatePdf(type, data, currency);
+    const pdf = await generatePdf(type, data, currency, primaryColor);
     
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${type}-${Date.now()}.pdf"`);
@@ -37,7 +38,7 @@ exportRouter.post('/pdf', async (req: Request<{}, {}, ExportRequest>, res: Respo
 
 exportRouter.post('/jpg', async (req: Request<{}, {}, ExportRequest>, res: Response) => {
   try {
-    const { type, data, currency = 'USD' } = req.body;
+    const { type, data, currency = 'USD', primaryColor } = req.body;
     
     if (!type || !data) {
       return res.status(400).json({
@@ -46,7 +47,7 @@ exportRouter.post('/jpg', async (req: Request<{}, {}, ExportRequest>, res: Respo
       });
     }
     
-    const jpg = await generateJpg(type, data, currency);
+    const jpg = await generateJpg(type, data, currency, primaryColor);
     
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Content-Disposition', `attachment; filename="${type}-${Date.now()}.jpg"`);

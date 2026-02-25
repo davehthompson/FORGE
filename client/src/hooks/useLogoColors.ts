@@ -99,6 +99,13 @@ export function useLogoColors(logoUrl: string | undefined | null): LogoColors | 
 }
 
 /**
+ * Get a cached logo color for a given URL (synchronous, returns null if not cached)
+ */
+export function getCachedLogoColor(logoUrl: string): LogoColors | null {
+  return colorCache.get(logoUrl) || null;
+}
+
+/**
  * Get a lighter version of the color for backgrounds
  */
 export function getLighterColor(rgb: [number, number, number], amount: number = 0.9): string {

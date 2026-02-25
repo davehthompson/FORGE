@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "client/dist",
+  "functions": {
+    "server/dist/**/*.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  }
+}
