@@ -1,0 +1,1 @@
+export { QuickReceiptPrompt } from './QuickReceiptPrompt';

@@ -1,0 +1,144 @@
+@import "tailwindcss";
+
+/* Ramp Brand Design System */
+
+/* Custom font - Lausanne (with system fallbacks) */
+@font-face {
+  font-family: 'Lausanne';
+  src: local('Lausanne');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lausanne';
+  src: local('Lausanne');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ramp Color Palette as CSS Custom Properties */
+:root {
+  /* Primary */
+  --color-white: #FFFFFF;
+  --color-slate: #3D3D3D;
+  --color-sand: #F4F3EF;
+
+  /* Secondary */
+  --color-stone: #E0DDD8;
+  --color-rust: #924F35;
+  --color-sage: #787868;
+  --color-limestone: #E8E8DC;
+
+  /* Tertiary */
+  --color-smolder: #17332D;
+  --color-mist: #AABCA3;
+  --color-terrace: #5E540E;
+  --color-eggplant: #32174D;
+  --color-magnolia: #DBA2CE;
+  --color-mustard: #DECC65;
+  --color-spring: #6F8BCC;
+  --color-blaze: #D35B13;
+  --color-linen: #E8E8DC;
+  --color-pebble: #FFE2D9;
+
+  /* Accent */
+  --color-solar: #E4F222;
+
+  /* Grays */
+  --color-gray-100: #FBFBFB;
+  --color-gray-200: #F1F2F2;
+  --color-gray-300: #D4D4D4;
+  --color-gray-400: #B5B5B5;
+  --color-gray-500: #969696;
+  --color-gray-600: #787878;
+  --color-gray-700: #595C5C;
+  --color-gray-900: #1F1F1F;
+}
+
+/* Tailwind Theme Extension */
+@theme {
+  /* Primary Colors */
+  --color-ramp-white: #FFFFFF;
+  --color-ramp-slate: #3D3D3D;
+  --color-ramp-sand: #F4F3EF;
+
+  /* Secondary Colors */
+  --color-ramp-stone: #E0DDD8;
+  --color-ramp-rust: #924F35;
+  --color-ramp-sage: #787868;
+  --color-ramp-limestone: #E8E8DC;
+
+  /* Tertiary Colors */
+  --color-ramp-smolder: #17332D;
+  --color-ramp-mist: #AABCA3;
+  --color-ramp-terrace: #5E540E;
+  --color-ramp-eggplant: #32174D;
+  --color-ramp-magnolia: #DBA2CE;
+  --color-ramp-mustard: #DECC65;
+  --color-ramp-spring: #6F8BCC;
+  --color-ramp-blaze: #D35B13;
+  --color-ramp-linen: #E8E8DC;
+  --color-ramp-pebble: #FFE2D9;
+
+  /* Accent */
+  --color-ramp-solar: #E4F222;
+
+  /* Grays */
+  --color-ramp-gray-100: #FBFBFB;
+  --color-ramp-gray-200: #F1F2F2;
+  --color-ramp-gray-300: #D4D4D4;
+  --color-ramp-gray-400: #B5B5B5;
+  --color-ramp-gray-500: #969696;
+  --color-ramp-gray-600: #787878;
+  --color-ramp-gray-700: #595C5C;
+  --color-ramp-gray-900: #1F1F1F;
+
+  /* Font Family */
+  --font-sans: 'Lausanne', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/* Base styles */
+html {
+  font-family: var(--font-sans);
+  color: var(--color-slate);
+  background-color: var(--color-sand);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Typography utilities */
+.heading-display {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.body-text {
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+/* Focus styles */
+*:focus-visible {
+  outline: 2px solid var(--color-ramp-slate);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background-color: var(--color-ramp-solar);
+  color: var(--color-ramp-slate);
+}

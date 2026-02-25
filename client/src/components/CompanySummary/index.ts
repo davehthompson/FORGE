@@ -1,0 +1,1 @@
+export { CompanySummary } from './CompanySummary';
