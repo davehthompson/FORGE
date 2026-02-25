@@ -37,7 +37,10 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🔨 FORGE server running on http://localhost:${PORT}`);
-});
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🔨 FORGE server running on http://localhost:${PORT}`);
+  });
+}
