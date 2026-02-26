@@ -37,13 +37,13 @@ export function Home() {
           <Card 
             variant="elevated" 
             padding="lg" 
-            className="cursor-pointer hover:shadow-xl transition-all duration-300 group border-2 border-transparent hover:border-ramp-slate"
+            className="cursor-pointer hover:shadow-xl transition-all duration-300 group border-2 border-transparent hover:border-ramp-solar"
             onClick={handleCompanyMode}
           >
             <CardContent>
               <div className="flex flex-col items-center text-center">
-                <div className="w-20 h-20 rounded-full bg-ramp-sand flex items-center justify-center mb-6 group-hover:bg-ramp-slate group-hover:text-white transition-colors">
-                  <Building2 className="w-10 h-10" />
+                <div className="w-20 h-20 rounded-full bg-ramp-solar/20 flex items-center justify-center mb-6 group-hover:bg-ramp-solar transition-colors">
+                  <Building2 className="w-10 h-10 text-ramp-slate" />
                 </div>
                 <h2 className="text-xl font-bold text-ramp-slate mb-3">
                   Company Lookup
