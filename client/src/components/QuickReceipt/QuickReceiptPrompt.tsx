@@ -7,8 +7,6 @@ import {
   ArrowRight,
   Loader2,
   ChevronDown,
-  CheckCircle2,
-  Coins,
   Plane,
   Hotel,
   Car,
