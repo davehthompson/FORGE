@@ -166,7 +166,6 @@ export function Export() {
 
   const handleStartOver = () => {
     reset();
-    setStep('input');
   };
 
   // Calculate total exportable items (including multiple invoices)
@@ -190,7 +189,9 @@ export function Export() {
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back to Editor
           </Button>
-          <Logo size="sm" />
+          <button onClick={handleStartOver} className="cursor-pointer">
+            <Logo size="sm" />
+          </button>
         </div>
 
         <Button variant="outline" onClick={handleStartOver}>

@@ -56,6 +56,8 @@ export function Editor() {
     setCurrentInvoiceIndex,
     updateGeneratedInvoice,
     setStep,
+    mode,
+    reset,
   } = useStore();
 
   const [scale, setScale] = useState(1);
@@ -125,12 +127,14 @@ export function Editor() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setStep('select')}
+            onClick={() => setStep(mode === 'quick_receipt' ? 'quick_receipt' : 'select')}
           >
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
-          <Logo size="sm" />
+          <button onClick={reset} className="cursor-pointer">
+            <Logo size="sm" />
+          </button>
         </div>
 
         <div className="flex items-center gap-2">

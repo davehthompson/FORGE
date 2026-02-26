@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Globe, ArrowRight, AlertCircle } from 'lucide-react';
+import { Globe, ArrowRight, ArrowLeft, AlertCircle } from 'lucide-react';
 import { Button, Input, Card, CardContent } from '../ui';
 import { useStore } from '../../hooks/useStore';
 import { enrichCompany } from '../../services/api';
@@ -44,6 +44,16 @@ export function DomainInput() {
     <div className="min-h-screen flex items-center justify-center p-6">
       <Card variant="elevated" padding="lg" className="w-full max-w-lg">
         <CardContent>
+          <div className="mb-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setStep('home')}
+            >
+              <ArrowLeft className="w-4 h-4 mr-1" />
+              Back
+            </Button>
+          </div>
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-ramp-sand mb-4">
               <Globe className="w-8 h-8 text-ramp-slate" />
