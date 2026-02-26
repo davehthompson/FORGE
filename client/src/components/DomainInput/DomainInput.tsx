@@ -41,7 +41,7 @@ export function DomainInput() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-6">
       <Card variant="elevated" padding="lg" className="w-full max-w-lg">
         <CardContent>
           <div className="mb-4">

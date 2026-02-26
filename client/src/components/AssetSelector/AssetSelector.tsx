@@ -230,7 +230,7 @@ export function AssetSelector() {
       : '';
 
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
           {/* Pulsating Ramp logo */}
           <div className="mb-6">
@@ -262,7 +262,7 @@ export function AssetSelector() {
 
   // SELECTION VIEW - Normal asset selection UI
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-6">
       <Card variant="elevated" padding="lg" className="w-full max-w-2xl">
         <CardContent>
           {/* Header */}

@@ -22,7 +22,7 @@ import {
   FileText,
   Mail
 } from 'lucide-react';
-import { Button, Card, CardContent } from '../ui';
+import { Button } from '../ui';
 import { useStore } from '../../hooks/useStore';
 import { generateQuickReceipt } from '../../services/api';
 import { CURRENCIES, getCurrency } from '../../utils/currencies';
@@ -253,226 +253,213 @@ export function QuickReceiptPrompt() {
   const selectedCategoryData = EXPENSE_CATEGORIES.find(c => c.id === selectedCategory);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <Card variant="elevated" padding="lg" className="w-full max-w-4xl">
-        <CardContent>
-          {/* Header */}
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-ramp-solar/20 mb-3">
-              <Receipt className="w-7 h-7 text-ramp-slate" />
+    <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-6 overflow-y-auto">
+      <div className="w-full max-w-5xl bg-white rounded-xl shadow-lg border border-ramp-stone overflow-hidden flex">
+        {/* Left column - Categories */}
+        <div className="w-64 flex-shrink-0 border-r border-ramp-stone bg-ramp-sand/30 flex flex-col">
+          <div className="p-4 border-b border-ramp-stone">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-9 h-9 rounded-full bg-ramp-solar/20">
+                <Receipt className="w-4 h-4 text-ramp-slate" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-ramp-slate">Category</h2>
+                <p className="text-ramp-sage text-xs">Select expense type</p>
+              </div>
             </div>
-            <h1 className="text-2xl font-bold text-ramp-slate mb-1">
-              Quick Receipt Generator
-            </h1>
-            <p className="text-ramp-sage text-sm">
-              Select a category and describe your expense
-            </p>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+            {EXPENSE_CATEGORIES.map((category) => {
+              const Icon = category.icon;
+              const isSelected = selectedCategory === category.id;
+              return (
+                <button
+                  key={category.id}
+                  onClick={() => handleCategoryClick(category.id)}
+                  disabled={isLoading}
+                  className={`w-full px-3 py-2 rounded-lg text-left transition-all duration-200 flex items-center gap-2.5 ${
+                    isSelected
+                      ? 'bg-white border border-ramp-slate shadow-sm'
+                      : 'border border-transparent hover:bg-white/60'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-500'}`} />
+                  <span className={`text-sm ${isSelected ? 'font-medium text-ramp-slate' : 'text-ramp-gray-700'}`}>
+                    {category.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Right column - Form */}
+        <div className="flex-1 p-6 space-y-4">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-ramp-slate">Quick Receipt Generator</h1>
+              <p className="text-ramp-sage text-sm">Describe your expense and we'll generate a receipt</p>
+            </div>
+            <button
+              onClick={() => setStep('home')}
+              disabled={isLoading}
+              className="text-sm text-ramp-sage hover:text-ramp-slate transition-colors flex items-center gap-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Categories */}
-            <div className="lg:col-span-1">
-              <label className="block text-sm font-medium text-ramp-slate mb-3">
-                Expense Category
+          {/* Receipt Style + Currency row */}
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-ramp-sage mb-1.5 uppercase tracking-wide">
+                Receipt Style
               </label>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
-                {EXPENSE_CATEGORIES.map((category) => {
-                  const Icon = category.icon;
-                  const isSelected = selectedCategory === category.id;
+              <div className="flex gap-1.5">
+                {RECEIPT_STYLES.map((style) => {
+                  const Icon = style.icon;
+                  const isSelected = quickReceiptType === style.id;
                   return (
                     <button
-                      key={category.id}
-                      onClick={() => handleCategoryClick(category.id)}
+                      key={style.id}
+                      onClick={() => setQuickReceiptType(style.id as typeof quickReceiptType)}
                       disabled={isLoading}
-                      className={`w-full p-3 rounded-lg border-2 text-left transition-all duration-200 flex items-center gap-3 ${
+                      className={`flex-1 py-2 px-2 rounded-lg border text-center transition-all ${
                         isSelected
                           ? 'border-ramp-slate bg-ramp-sand'
                           : 'border-ramp-stone hover:border-ramp-gray-400 bg-white'
                       }`}
                     >
-                      <Icon className={`w-5 h-5 flex-shrink-0 ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-500'}`} />
-                      <div className="flex-1 min-w-0">
-                        <p className={`font-medium text-sm ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-700'}`}>
-                          {category.label}
-                        </p>
-                        <p className="text-xs text-ramp-sage truncate">{category.description}</p>
-                      </div>
-                      {isSelected && <CheckCircle2 className="w-4 h-4 text-ramp-slate flex-shrink-0" />}
+                      <Icon className={`w-4 h-4 mx-auto mb-0.5 ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-500'}`} />
+                      <p className={`text-xs font-medium ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-600'}`}>
+                        {style.label}
+                      </p>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Right Column - Form */}
-            <div className="lg:col-span-2 space-y-4">
-              {/* Receipt Style */}
-              <div>
-                <label className="block text-sm font-medium text-ramp-slate mb-2">
-                  Receipt Style
-                  {selectedCategory && (
-                    <span className="ml-2 text-xs text-ramp-sage font-normal">
-                      (Auto-selected for {selectedCategory.replace('_', ' ')})
-                    </span>
-                  )}
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {RECEIPT_STYLES.map((style) => {
-                    const Icon = style.icon;
-                    const isSelected = quickReceiptType === style.id;
-                    return (
+            <div className="w-44">
+              <label className="block text-xs font-medium text-ramp-sage mb-1.5 uppercase tracking-wide">
+                Currency
+              </label>
+              <div className="relative">
+                <button
+                  onClick={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
+                  disabled={isLoading}
+                  className="w-full py-2 px-3 rounded-lg border border-ramp-stone hover:border-ramp-gray-400 bg-white text-left transition-all flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">{currentCurrency.flag}</span>
+                    <span className="font-medium text-ramp-slate text-sm">{currentCurrency.code}</span>
+                    <span className="text-ramp-sage text-xs">{currentCurrency.symbol}</span>
+                  </div>
+                  <ChevronDown className={`w-3.5 h-3.5 text-ramp-sage transition-transform ${showCurrencyDropdown ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {showCurrencyDropdown && (
+                  <div className="absolute z-20 w-full mt-1 bg-white rounded-lg border border-ramp-stone shadow-lg max-h-48 overflow-y-auto">
+                    {CURRENCIES.map((currency) => (
                       <button
-                        key={style.id}
-                        onClick={() => setQuickReceiptType(style.id as typeof quickReceiptType)}
-                        disabled={isLoading}
-                        className={`p-3 rounded-lg border-2 text-center transition-all ${
-                          isSelected
-                            ? 'border-ramp-slate bg-ramp-sand'
-                            : 'border-ramp-stone hover:border-ramp-gray-400 bg-white'
+                        key={currency.code}
+                        onClick={() => {
+                          setSelectedCurrency(currency.code);
+                          setShowCurrencyDropdown(false);
+                        }}
+                        className={`w-full p-2 text-left hover:bg-ramp-sand transition-colors flex items-center gap-2 text-sm ${
+                          selectedCurrency === currency.code ? 'bg-ramp-sand' : ''
                         }`}
                       >
-                        <Icon className={`w-5 h-5 mx-auto mb-1 ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-500'}`} />
-                        <p className={`text-xs font-medium ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-600'}`}>
-                          {style.label}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Currency */}
-              <div>
-                <label className="block text-sm font-medium text-ramp-slate mb-2">
-                  <Coins className="w-4 h-4 inline mr-1" />
-                  Currency
-                </label>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
-                    disabled={isLoading}
-                    className="w-full p-3 rounded-lg border-2 border-ramp-stone hover:border-ramp-gray-400 bg-white text-left transition-all flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{currentCurrency.flag}</span>
-                      <span className="font-medium text-ramp-slate text-sm">{currentCurrency.code}</span>
-                      <span className="text-ramp-sage text-xs">{currentCurrency.symbol}</span>
-                    </div>
-                    <ChevronDown className={`w-4 h-4 text-ramp-sage transition-transform ${showCurrencyDropdown ? 'rotate-180' : ''}`} />
-                  </button>
-                  
-                  {showCurrencyDropdown && (
-                    <div className="absolute z-20 w-full mt-1 bg-white rounded-lg border-2 border-ramp-stone shadow-lg max-h-48 overflow-y-auto">
-                      {CURRENCIES.map((currency) => (
-                        <button
-                          key={currency.code}
-                          onClick={() => {
-                            setSelectedCurrency(currency.code);
-                            setShowCurrencyDropdown(false);
-                          }}
-                          className={`w-full p-2 text-left hover:bg-ramp-sand transition-colors flex items-center gap-2 text-sm ${
-                            selectedCurrency === currency.code ? 'bg-ramp-sand' : ''
-                          }`}
-                        >
-                          <span>{currency.flag}</span>
-                          <span className="font-medium text-ramp-slate">{currency.code}</span>
-                          <span className="text-ramp-sage text-xs">{currency.symbol}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Example prompts for selected category */}
-              {selectedCategoryData && (
-                <div className="p-3 bg-ramp-sand/50 rounded-lg">
-                  <p className="text-xs font-medium text-ramp-slate mb-2">
-                    Example {selectedCategoryData.label} receipts:
-                  </p>
-                  <div className="space-y-1">
-                    {selectedCategoryData.examples.map((example, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleExampleClick(example)}
-                        disabled={isLoading}
-                        className="w-full text-left text-xs p-2 bg-white rounded border border-ramp-stone hover:border-ramp-gray-400 transition-colors text-ramp-gray-700 hover:text-ramp-slate"
-                      >
-                        {example.slice(0, 100)}{example.length > 100 ? '...' : ''}
+                        <span>{currency.flag}</span>
+                        <span className="font-medium text-ramp-slate">{currency.code}</span>
+                        <span className="text-ramp-sage text-xs">{currency.symbol}</span>
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
-
-              {/* Prompt Input */}
-              <div>
-                <label className="block text-sm font-medium text-ramp-slate mb-2">
-                  Describe Your Receipt
-                </label>
-                <textarea
-                  value={quickReceiptPrompt}
-                  onChange={(e) => setQuickReceiptPrompt(e.target.value)}
-                  placeholder={selectedCategoryData 
-                    ? `Describe your ${selectedCategoryData.label.toLowerCase()} expense in detail...`
-                    : "Select a category above or describe any expense..."}
-                  className="w-full h-28 px-4 py-3 bg-white border border-ramp-stone rounded-lg text-ramp-slate placeholder:text-ramp-gray-500 transition-colors duration-200 hover:border-ramp-gray-500 focus:outline-none focus:border-ramp-slate focus:ring-2 focus:ring-ramp-slate/20 resize-none text-sm"
-                  disabled={isLoading}
-                />
-              </div>
-
-              {/* Error Display */}
-              {error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-600">{error}</p>
-                </div>
-              )}
-
-              {/* Generation Status */}
-              {isLoading && generationStatus && (
-                <div className="p-3 bg-ramp-solar/20 border border-ramp-solar rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Loader2 className="w-4 h-4 text-ramp-slate animate-spin" />
-                    <p className="text-sm text-ramp-slate">{generationStatus}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex gap-3 pt-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setStep('home')}
-                  disabled={isLoading}
-                  className="flex-shrink-0"
-                >
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back
-                </Button>
-                <Button
-                  fullWidth
-                  onClick={handleGenerate}
-                  disabled={isLoading || !quickReceiptPrompt.trim()}
-                  className="group"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      <span>Generating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      <span>Generate Receipt</span>
-                      <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                    </>
-                  )}
-                </Button>
+                )}
               </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
+
+          {/* Example prompts for selected category */}
+          {selectedCategoryData && (
+            <div className="p-3 bg-ramp-sand/40 rounded-lg">
+              <p className="text-xs font-medium text-ramp-slate mb-1.5">
+                Try an example:
+              </p>
+              <div className="space-y-1">
+                {selectedCategoryData.examples.map((example, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleExampleClick(example)}
+                    disabled={isLoading}
+                    className="w-full text-left text-xs p-2 bg-white rounded border border-ramp-stone hover:border-ramp-gray-400 transition-colors text-ramp-gray-700 hover:text-ramp-slate"
+                  >
+                    {example.slice(0, 140)}{example.length > 140 ? '...' : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Prompt Input */}
+          <div>
+            <label className="block text-xs font-medium text-ramp-sage mb-1.5 uppercase tracking-wide">
+              Description
+            </label>
+            <textarea
+              value={quickReceiptPrompt}
+              onChange={(e) => setQuickReceiptPrompt(e.target.value)}
+              placeholder={selectedCategoryData 
+                ? `Describe your ${selectedCategoryData.label.toLowerCase()} expense in detail — include vendor, amounts, dates, and any specifics...`
+                : "Select a category or describe any expense..."}
+              className="w-full h-28 px-4 py-3 bg-white border border-ramp-stone rounded-lg text-ramp-slate placeholder:text-ramp-gray-500 transition-colors duration-200 hover:border-ramp-gray-500 focus:outline-none focus:border-ramp-slate focus:ring-2 focus:ring-ramp-slate/20 resize-none text-sm"
+              disabled={isLoading}
+            />
+          </div>
+
+          {/* Error Display */}
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          )}
+
+          {/* Generation Status */}
+          {isLoading && generationStatus && (
+            <div className="p-3 bg-ramp-solar/20 border border-ramp-solar rounded-lg">
+              <div className="flex items-center gap-3">
+                <Loader2 className="w-4 h-4 text-ramp-slate animate-spin" />
+                <p className="text-sm text-ramp-slate">{generationStatus}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Generate Button */}
+          <Button
+            fullWidth
+            onClick={handleGenerate}
+            disabled={isLoading || !quickReceiptPrompt.trim()}
+            className="group"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <span>Generating...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-2" />
+                <span>Generate Receipt</span>
+                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
