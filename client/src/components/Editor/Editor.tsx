@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { 
   FileText, 
   Receipt, 
@@ -13,7 +13,8 @@ import {
   ChevronRight,
   Printer,
   Building2,
-  Plane
+  Plane,
+  GripVertical
 } from 'lucide-react';
 import { Button, Logo } from '../ui';
 import { useStore } from '../../hooks/useStore';
@@ -60,8 +61,65 @@ export function Editor() {
     reset,
   } = useStore();
 
-  const [scale, setScale] = useState(1);
+  const DOC_WIDTH = 794;
+  const PREVIEW_PADDING = 96;
+
+  const [userZoom, setUserZoom] = useState(1);
+  const [sidebarWidth, setSidebarWidth] = useState(384);
+  const [isDragging, setIsDragging] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const MIN_SIDEBAR = 280;
+  const MAX_SIDEBAR = 600;
+
+  useEffect(() => {
+    const el = previewContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const fitScale = containerWidth > 0
+    ? Math.min(1, (containerWidth - PREVIEW_PADDING) / DOC_WIDTH)
+    : 1;
+  const scale = fitScale * userZoom;
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    dragRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = e.clientX - dragRef.current.startX;
+      const newWidth = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, dragRef.current.startWidth + delta));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      dragRef.current = null;
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
   // Handle multiple invoices
   const hasMultipleInvoices = generatedInvoices.length > 1;
@@ -98,15 +156,15 @@ export function Editor() {
   };
 
   const handleZoomIn = () => {
-    setScale((s) => Math.min(s + 0.1, 1.5));
+    setUserZoom((z) => Math.min(z + 0.1, 2));
   };
 
   const handleZoomOut = () => {
-    setScale((s) => Math.max(s - 0.1, 0.3));
+    setUserZoom((z) => Math.max(z - 0.1, 0.3));
   };
 
   const handleResetZoom = () => {
-    setScale(0.6);
+    setUserZoom(1);
   };
 
   const handleExport = () => {
@@ -182,11 +240,44 @@ export function Editor() {
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar - left */}
+        <div
+          className="bg-white border-r border-ramp-stone overflow-y-auto flex-shrink-0"
+          style={{ width: sidebarWidth }}
+        >
+          <div className="p-4 border-b border-ramp-stone">
+            <div className="flex items-center gap-2">
+              <Icon className="w-5 h-5 text-ramp-slate" />
+              <h2 className="font-bold text-ramp-slate">Edit {ASSET_LABELS[currentAsset]}</h2>
+            </div>
+            <p className="text-sm text-ramp-sage mt-1">
+              Make changes to the document content
+            </p>
+          </div>
+          <div className="p-4">
+            <EditorSidebar
+              type={currentAsset}
+              data={currentData}
+              onChange={handleDataChange}
+            />
+          </div>
+        </div>
+
+        {/* Resizable divider */}
+        <div
+          onMouseDown={handleMouseDown}
+          className="w-px flex-shrink-0 cursor-col-resize flex items-center justify-center group relative bg-ramp-stone"
+        >
+          <div className={`absolute w-4 h-4 rounded-full border bg-white flex items-center justify-center shadow-sm transition-colors ${isDragging ? 'border-ramp-solar' : 'border-ramp-stone group-hover:border-ramp-sage'}`}>
+            <GripVertical className="w-2.5 h-2.5 text-ramp-sage" />
+          </div>
+        </div>
+
         {/* Preview area */}
-        <div className="flex-1 overflow-auto p-8 flex items-start justify-center">
-          <div className="relative">
-            {/* Zoom controls */}
-            <div className="absolute -top-12 left-0 flex items-center gap-2 bg-white rounded-lg shadow-sm border border-ramp-stone p-1">
+        <div className="flex-1 overflow-auto flex flex-col">
+          {/* Toolbar row */}
+          <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
+            <div className="flex items-center gap-2 bg-white rounded-lg shadow-sm border border-ramp-stone p-1">
               <button
                 onClick={handleZoomOut}
                 className="p-1.5 hover:bg-ramp-sand rounded transition-colors"
@@ -214,9 +305,8 @@ export function Editor() {
               </button>
             </div>
 
-            {/* Invoice navigation for multiple invoices */}
             {isViewingInvoice && hasMultipleInvoices && (
-              <div className="absolute -top-12 right-0 flex items-center gap-2 bg-white rounded-lg shadow-sm border border-ramp-stone p-1">
+              <div className="flex items-center gap-2 bg-white rounded-lg shadow-sm border border-ramp-stone p-1">
                 <button
                   onClick={handlePreviousInvoice}
                   disabled={currentInvoiceIndex === 0}
@@ -236,8 +326,10 @@ export function Editor() {
                 </button>
               </div>
             )}
+          </div>
 
-            {/* Document preview */}
+          {/* Document preview */}
+          <div ref={previewContainerRef} className="flex-1 overflow-auto px-8 pb-8 flex items-start justify-center">
             <div className="bg-ramp-gray-400 p-4 rounded-lg shadow-inner">
               <AssetPreview
                 ref={previewRef}
@@ -246,26 +338,6 @@ export function Editor() {
                 scale={scale}
               />
             </div>
-          </div>
-        </div>
-
-        {/* Sidebar */}
-        <div className="w-96 bg-white border-l border-ramp-stone overflow-y-auto">
-          <div className="p-4 border-b border-ramp-stone">
-            <div className="flex items-center gap-2">
-              <Icon className="w-5 h-5 text-ramp-slate" />
-              <h2 className="font-bold text-ramp-slate">Edit {ASSET_LABELS[currentAsset]}</h2>
-            </div>
-            <p className="text-sm text-ramp-sage mt-1">
-              Make changes to the document content
-            </p>
-          </div>
-          <div className="p-4">
-            <EditorSidebar
-              type={currentAsset}
-              data={currentData}
-              onChange={handleDataChange}
-            />
           </div>
         </div>
       </div>

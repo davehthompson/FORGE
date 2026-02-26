@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { generateAssetContent, generateAssetContentStreaming, generateQuickReceiptContent } from '../services/openai.js';
 import { CompanyProfile, AssetType, RelatedAssetContext, InvoiceConfig } from '../types.js';
 import { trackGeneration } from '../services/analytics.js';
+import { isTestDomain, getMockAsset, getMockStatusMessages } from '../services/mockData.js';
 
 export const generateRouter = Router();
 
@@ -46,6 +47,13 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
         success: false,
         error: `Invalid asset type. Must be one of: ${validTypes.join(', ')}`,
       });
+    }
+
+    if (isTestDomain(company.domain || '')) {
+      console.log(`🧪 Test mode — returning mock ${type}`);
+      const mockData = getMockAsset(type);
+      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: 'standard' });
+      return res.json({ success: true, data: mockData });
     }
     
     const assetData = await generateAssetContent(type, company, spendingCategory, currency);
@@ -111,7 +119,7 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering for nginx
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
     // Helper to send SSE events
@@ -119,6 +127,19 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
+
+    if (isTestDomain(company.domain || '')) {
+      console.log(`🧪 Test mode — streaming mock ${type}`);
+      const statuses = getMockStatusMessages(type);
+      for (const status of statuses) {
+        sendEvent('status', { status });
+        await new Promise(r => setTimeout(r, 400));
+      }
+      const mockData = getMockAsset(type, invoiceConfig, relatedAssets);
+      sendEvent('complete', { success: true, data: mockData });
+      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard' });
+      return res.end();
+    }
 
     // Generate with streaming status updates (pass related assets and invoice config for connected generation)
     const assetData = await generateAssetContentStreaming(

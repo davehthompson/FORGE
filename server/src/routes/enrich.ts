@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { enrichCompanyFromDomain } from '../services/enrichment.js';
+import { isTestDomain, getMockCompanyProfile } from '../services/mockData.js';
 
 export const enrichRouter = Router();
 
@@ -16,6 +17,11 @@ enrichRouter.post('/', async (req: Request<{}, {}, EnrichRequest>, res: Response
         success: false,
         error: 'Domain is required',
       });
+    }
+
+    if (isTestDomain(domain)) {
+      console.log('🧪 Test domain detected — returning mock company data');
+      return res.json({ success: true, data: getMockCompanyProfile() });
     }
     
     const companyProfile = await enrichCompanyFromDomain(domain);
