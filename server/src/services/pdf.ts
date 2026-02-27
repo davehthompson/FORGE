@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium-min';
 import { PDFDocument } from 'pdf-lib';
 import sharp from 'sharp';
-import { AssetType, AssetData, InvoiceData, ReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../types.js';
+import { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../types.js';
 
 // Logo API key for logo.dev
 const LOGO_API_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
@@ -519,8 +519,7 @@ function generateHtml(type: AssetType, data: AssetData, currency: string = 'USD'
     case 'airline_receipt':
       return generateAirlineReceiptHtml(data as AirlineReceiptData, styles, formatCurrency, colors);
     case 'paper_receipt':
-      // Paper receipts use the same receipt HTML for export
-      return generateReceiptHtml(data as ReceiptData, styles, formatCurrency);
+      return generatePaperReceiptHtml(data as PaperReceiptData, styles, formatCurrency);
     default:
       throw new Error(`Unknown asset type: ${type}`);
   }
@@ -625,7 +624,8 @@ function generateInvoiceHtml(data: InvoiceData, styles: string, formatCurrency: 
 }
 
 function generateReceiptHtml(data: ReceiptData, styles: string, formatCurrency: (amount: number) => string): string {
-  const logoUrl = data.vendor.domain ? getLogoUrl(data.vendor.domain, 64) : '';
+  const vendor = data.vendor || { name: '', domain: '', address: '' };
+  const logoUrl = vendor.domain ? getLogoUrl(vendor.domain, 64) : '';
   
   return `
     <!DOCTYPE html>
@@ -636,8 +636,8 @@ function generateReceiptHtml(data: ReceiptData, styles: string, formatCurrency: 
         <div class="header-left">
           ${logoUrl ? `<img src="${logoUrl}" class="vendor-logo" onerror="this.style.display='none'" />` : ''}
           <div>
-            <div class="vendor-name">${data.vendor.name}</div>
-            <div class="vendor-details">${data.vendor.address}</div>
+            <div class="vendor-name">${vendor.name}</div>
+            <div class="vendor-details">${vendor.address}</div>
           </div>
         </div>
         <div class="document-info">
@@ -693,6 +693,132 @@ function generateReceiptHtml(data: ReceiptData, styles: string, formatCurrency: 
         <div class="label">Payment Method</div>
         <p>${data.paymentMethod}${data.cardLast4 ? ` ending in ${data.cardLast4}` : ''}</p>
       </div>
+    </body>
+    </html>
+  `;
+}
+
+function generatePaperReceiptHtml(data: PaperReceiptData, _styles: string, formatCurrency: (amount: number) => string): string {
+  const formatPrice = (amount: number) => amount.toFixed(2);
+
+  const barcodeHtml = Array.from({ length: 50 }, (_, i) => {
+    const w = Math.random() > 0.5 ? 2 : 1;
+    const bg = i % 2 === 0 ? '#000' : '#fff';
+    return `<div style="width:${w}px;height:40px;background:${bg}"></div>`;
+  }).join('');
+
+  const paymentIcon = (() => {
+    switch (data.payment?.method) {
+      case 'cash': return '&#x1F4B5;';
+      case 'gift_card': return '&#x1F381;';
+      case 'mobile': return '&#x1F4F1;';
+      default: return '&#x1F4B3;';
+    }
+  })();
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Courier+Prime&display=swap');
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Courier Prime', 'Courier New', monospace;
+          font-size: 12px;
+          color: #000;
+          width: 320px;
+          padding: 24px 16px;
+          background: #fff;
+          background-image:
+            linear-gradient(90deg, transparent 0%, transparent 50%, rgba(0,0,0,0.02) 50%, rgba(0,0,0,0.02) 100%),
+            linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px);
+          background-size: 4px 4px, 100% 2px;
+        }
+        .center { text-align: center; }
+        .row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+        .divider { border-top: 1px dashed #999; margin: 10px 0; }
+        .bold { font-weight: bold; }
+        .small { font-size: 10px; color: #666; }
+        .total-row { font-size: 14px; font-weight: bold; border-top: 1px solid #ccc; padding-top: 4px; margin-top: 4px; }
+        .barcode { display: flex; justify-content: center; margin: 16px 0 4px; }
+      </style>
+    </head>
+    <body>
+      <div class="center" style="margin-bottom:16px">
+        <div style="font-size:16px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">${data.store.name}</div>
+        ${data.store.storeNumber ? `<div class="small">Store #${data.store.storeNumber}</div>` : ''}
+        <div style="font-size:11px;margin-top:4px;line-height:1.5">
+          ${data.store.address}<br/>
+          ${data.store.city}, ${data.store.state} ${data.store.zip}<br/>
+          ${data.store.phone}
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="margin-bottom:10px">
+        <div class="row"><span>DATE:</span><span>${data.date}</span></div>
+        <div class="row"><span>TIME:</span><span>${data.time}</span></div>
+        <div class="row"><span>TRANS#:</span><span>${data.transactionId}</span></div>
+        ${data.cashier ? `<div class="row"><span>CASHIER:</span><span>${data.cashier}</span></div>` : ''}
+        ${data.register ? `<div class="row"><span>REG:</span><span>${data.register}</span></div>` : ''}
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="margin-bottom:10px">
+        ${data.items.map(item => `
+          <div>
+            <div class="row">
+              <span style="flex:1;padding-right:8px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+              <span class="bold">${formatPrice(item.total)}</span>
+            </div>
+            ${item.quantity > 1 ? `<div class="small" style="padding-left:8px">${item.quantity} @ ${formatPrice(item.unitPrice)}</div>` : ''}
+            ${item.sku ? `<div class="small" style="padding-left:8px;font-size:9px;color:#999">SKU: ${item.sku}</div>` : ''}
+            ${item.discount && item.discount > 0 ? `<div class="small" style="padding-left:8px">DISCOUNT: -${formatPrice(item.discount)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="margin-bottom:10px">
+        <div class="row"><span>SUBTOTAL:</span><span>${formatPrice(data.subtotal)}</span></div>
+        <div class="row"><span>TAX (${(data.taxRate * 100).toFixed(2)}%):</span><span>${formatPrice(data.taxAmount)}</span></div>
+        ${data.tip && data.tip > 0 ? `<div class="row"><span>TIP:</span><span>${formatPrice(data.tip)}</span></div>` : ''}
+        ${data.savings && data.savings > 0 ? `<div class="row small"><span>*** YOU SAVED ***</span><span>-${formatPrice(data.savings)}</span></div>` : ''}
+        <div class="row total-row"><span>TOTAL:</span><span>${formatCurrency(data.total)}</span></div>
+      </div>
+
+      <div style="margin-bottom:10px">
+        <div class="row" style="align-items:center">
+          <span>${paymentIcon} ${(data.payment?.method || 'card').replace('_', ' ').toUpperCase()}${data.payment?.cardType ? ` (${data.payment.cardType})` : ''}</span>
+          <span>${formatCurrency(data.total)}</span>
+        </div>
+        ${data.payment?.cardLast4 ? `<div class="small" style="padding-left:16px">Card: ****${data.payment.cardLast4}</div>` : ''}
+        ${data.payment?.approvalCode ? `<div class="small" style="padding-left:16px">Approval: ${data.payment.approvalCode}</div>` : ''}
+        ${data.payment?.method === 'cash' && data.payment?.amountTendered ? `
+          <div class="row"><span>CASH TENDERED:</span><span>${formatCurrency(data.payment.amountTendered)}</span></div>
+          ${data.payment?.change !== undefined ? `<div class="row bold"><span>CHANGE DUE:</span><span>${formatCurrency(data.payment.change)}</span></div>` : ''}
+        ` : ''}
+      </div>
+
+      ${data.loyaltyPoints !== undefined ? `
+        <div class="divider"></div>
+        <div class="center bold" style="padding:8px 0">REWARDS POINTS EARNED: ${data.loyaltyPoints}</div>
+      ` : ''}
+
+      <div class="barcode">${barcodeHtml}</div>
+      <div class="center small" style="letter-spacing:2px">${data.barcode || data.transactionId}</div>
+
+      ${data.footer && data.footer.length > 0 ? `
+        <div class="center" style="margin-top:16px">
+          ${data.footer.map(line => `<div class="small">${line}</div>`).join('')}
+        </div>
+      ` : ''}
+
+      <div class="center" style="margin-top:16px;font-size:9px;color:#999">RECEIPT# ${data.receiptNumber}</div>
     </body>
     </html>
   `;
