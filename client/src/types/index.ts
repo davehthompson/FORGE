@@ -36,6 +36,7 @@ export interface InvoiceData {
     email: string;
   };
   lineItems: {
+    id: string;
     description: string;
     quantity: number;
     unitPrice: number;
@@ -243,6 +244,7 @@ export interface QuoteData {
     email: string;
   };
   items: {
+    id: string;
     description: string;
     quantity: number;
     unitPrice: number;
