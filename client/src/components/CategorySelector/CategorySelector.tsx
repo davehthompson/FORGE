@@ -70,48 +70,8 @@ export function CategorySelector() {
             </p>
           </div>
 
-          {/* Category Options */}
-          <div className="space-y-3 mb-4">
-            {company.spendingCategories.map((category, index) => {
-              const isSelected = !isCustomMode && selectedSpendingCategory === category;
-
-              return (
-                <button
-                  key={index}
-                  onClick={() => handleCategorySelect(category)}
-                  className={`
-                    w-full p-4 rounded-xl border-2 text-left transition-all duration-200
-                    flex items-center justify-between
-                    ${isSelected 
-                      ? 'border-ramp-slate bg-ramp-sand' 
-                      : 'border-ramp-stone hover:border-ramp-gray-400 bg-white'
-                    }
-                  `}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`
-                      w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold
-                      ${isSelected 
-                        ? 'bg-ramp-slate text-white' 
-                        : 'bg-ramp-stone text-ramp-slate'
-                      }
-                    `}>
-                      {index + 1}
-                    </div>
-                    <span className={`font-medium ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-700'}`}>
-                      {category}
-                    </span>
-                  </div>
-                  {isSelected && (
-                    <CheckCircle2 className="w-5 h-5 text-ramp-slate" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
           {/* Custom Category Option */}
-          <div className="mb-8">
+          <div className="mb-4">
             <button
               onClick={handleCustomToggle}
               className={`
@@ -157,6 +117,46 @@ export function CategorySelector() {
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Category Options */}
+          <div className="space-y-3 mb-8">
+            {company.spendingCategories.map((category, index) => {
+              const isSelected = !isCustomMode && selectedSpendingCategory === category;
+
+              return (
+                <button
+                  key={index}
+                  onClick={() => handleCategorySelect(category)}
+                  className={`
+                    w-full p-4 rounded-xl border-2 text-left transition-all duration-200
+                    flex items-center justify-between
+                    ${isSelected 
+                      ? 'border-ramp-slate bg-ramp-sand' 
+                      : 'border-ramp-stone hover:border-ramp-gray-400 bg-white'
+                    }
+                  `}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`
+                      w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold
+                      ${isSelected 
+                        ? 'bg-ramp-slate text-white' 
+                        : 'bg-ramp-stone text-ramp-slate'
+                      }
+                    `}>
+                      {index + 1}
+                    </div>
+                    <span className={`font-medium ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-700'}`}>
+                      {category}
+                    </span>
+                  </div>
+                  {isSelected && (
+                    <CheckCircle2 className="w-5 h-5 text-ramp-slate" />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Currency Selector */}
