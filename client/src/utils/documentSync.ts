@@ -25,16 +25,6 @@ interface SyncResult {
   invoices: InvoiceData[];
 }
 
-function computeInvoicePercentages(invoices: InvoiceData[]): number[] {
-  const subtotals = invoices.map(inv => inv.subtotal || 0);
-  const total = subtotals.reduce((s, v) => s + v, 0);
-  if (total === 0) {
-    const equal = 1 / invoices.length;
-    return invoices.map(() => equal);
-  }
-  return subtotals.map(s => s / total);
-}
-
 function recalcQuoteTotals(items: QuoteData['items'], discount: number): Pick<QuoteData, 'subtotal' | 'total'> {
   const subtotal = round2(items.reduce((sum, item) => sum + item.total, 0));
   return { subtotal, total: round2(subtotal - discount) };
