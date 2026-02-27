@@ -54,17 +54,19 @@ function buildInvoiceLineItemsForSplit(
   invoiceIndex: number,
   allPercentages: number[],
 ): InvoiceData['lineItems'] {
-  return quoteItems.map(item => {
-    const distributed = distributeQuantity(item.quantity, allPercentages);
-    const qty = distributed[invoiceIndex];
-    return {
-      id: item.id,
-      description: item.description,
-      quantity: qty,
-      unitPrice: item.unitPrice,
-      total: round2(qty * item.unitPrice),
-    };
-  });
+  return quoteItems
+    .map(item => {
+      const distributed = distributeQuantity(item.quantity, allPercentages);
+      const qty = distributed[invoiceIndex];
+      return {
+        id: item.id,
+        description: item.description,
+        quantity: qty,
+        unitPrice: item.unitPrice,
+        total: round2(qty * item.unitPrice),
+      };
+    })
+    .filter(item => item.quantity > 0);
 }
 
 function syncContractFromQuote(contract: ContractData, quote: QuoteData): ContractData {
@@ -104,6 +106,12 @@ function syncQuoteFromInvoices(quote: QuoteData, invoices: InvoiceData[]): Quote
       unitPrice,
       total: combinedTotal,
     });
+  }
+
+  for (const qi of quote.items) {
+    if (!allIds.has(qi.id)) {
+      mergedItems.push({ ...qi });
+    }
   }
 
   const discount = quote.discount || 0;
