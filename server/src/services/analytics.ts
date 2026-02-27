@@ -69,8 +69,8 @@ export async function getAnalyticsSummary() {
   await ensureTable();
 
   const totalRows = await client`SELECT COUNT(*)::int AS total FROM generation_events`;
-  const typeRows = await client`SELECT asset_type, COUNT(*)::text AS count FROM generation_events GROUP BY asset_type ORDER BY count DESC`;
-  const categoryRows = await client`SELECT spending_category, COUNT(*)::text AS count FROM generation_events WHERE spending_category != '' GROUP BY spending_category ORDER BY count DESC`;
+  const typeRows = await client`SELECT asset_type, COUNT(*)::int AS count FROM generation_events GROUP BY asset_type ORDER BY count DESC`;
+  const categoryRows = await client`SELECT spending_category, COUNT(*)::int AS count FROM generation_events WHERE spending_category != '' GROUP BY spending_category ORDER BY count DESC`;
 
   const total = (totalRows as Record<string, unknown>[])[0]?.total as number ?? 0;
 
@@ -78,11 +78,11 @@ export async function getAnalyticsSummary() {
     total,
     byType: (typeRows as Record<string, unknown>[]).map((r) => ({
       type: r.asset_type as string,
-      count: parseInt(r.count as string, 10),
+      count: r.count as number,
     })),
     byCategory: (categoryRows as Record<string, unknown>[]).map((r) => ({
       category: r.spending_category as string,
-      count: parseInt(r.count as string, 10),
+      count: r.count as number,
     })),
   };
 }
@@ -94,7 +94,7 @@ export async function getAnalyticsCompanies() {
   await ensureTable();
 
   const rows = await client`
-    SELECT company_name, company_domain, COUNT(*)::text AS count, MAX(created_at)::text AS last_used
+    SELECT company_name, company_domain, COUNT(*)::int AS count, MAX(created_at)::text AS last_used
     FROM generation_events
     WHERE company_name != ''
     GROUP BY company_name, company_domain
@@ -104,7 +104,7 @@ export async function getAnalyticsCompanies() {
   return (rows as Record<string, unknown>[]).map((r) => ({
     name: r.company_name as string,
     domain: r.company_domain as string,
-    count: parseInt(r.count as string, 10),
+    count: r.count as number,
     lastUsed: r.last_used as string,
   }));
 }
@@ -116,15 +116,23 @@ export async function getAnalyticsTimeline(days: number = 30) {
   await ensureTable();
 
   const rows = await client`
-    SELECT DATE(created_at)::text AS date, COUNT(*)::text AS count
-    FROM generation_events
-    WHERE created_at >= NOW() - MAKE_INTERVAL(days => ${days})
-    GROUP BY DATE(created_at)
+    SELECT d::date::text AS date, COALESCE(e.count, 0)::int AS count
+    FROM generate_series(
+      CURRENT_DATE - ${days} + 1,
+      CURRENT_DATE,
+      '1 day'::interval
+    ) AS d
+    LEFT JOIN (
+      SELECT DATE(created_at) AS event_date, COUNT(*)::int AS count
+      FROM generation_events
+      WHERE created_at >= CURRENT_DATE - ${days} + 1
+      GROUP BY DATE(created_at)
+    ) e ON e.event_date = d::date
     ORDER BY date ASC
   `;
 
   return (rows as Record<string, unknown>[]).map((r) => ({
     date: r.date as string,
-    count: parseInt(r.count as string, 10),
+    count: r.count as number,
   }));
 }

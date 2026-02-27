@@ -2,6 +2,15 @@ import { Trash2, Plus } from 'lucide-react';
 import { Input } from '../ui';
 import type { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, HotelFolioData, AirlineReceiptData, QuoteData, ContractData } from '../../types';
 import { generateLineItemId } from '../../utils/documentSync';
+import { useStore } from '../../hooks/useStore';
+import { getCurrency } from '../../utils/currencies';
+
+const numVal = (v: number) => v || '';
+
+function useCurrencySymbol() {
+  const { selectedCurrency } = useStore();
+  return getCurrency(selectedCurrency)?.symbol || '$';
+}
 
 interface EditorSidebarProps {
   type: AssetType;
@@ -32,6 +41,7 @@ export function EditorSidebar({ type, data, onChange }: EditorSidebarProps) {
 
 // Invoice Editor
 function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateVendor = (field: keyof InvoiceData['vendor'], value: string) => {
     onChange({ ...data, vendor: { ...data.vendor, [field]: value } });
   };
@@ -148,13 +158,13 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
               <Input
                 label="Qty"
                 type="number"
-                value={item.quantity}
+                value={numVal(item.quantity)}
                 onChange={(e) => updateLineItem(index, 'quantity', parseInt(e.target.value) || 0)}
               />
               <Input
-                label="Unit Price"
+                label={`Unit Price (${sym})`}
                 type="number"
-                value={item.unitPrice}
+                value={numVal(item.unitPrice)}
                 onChange={(e) => updateLineItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
               />
             </div>
@@ -180,6 +190,7 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
 
 // Receipt Editor
 function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateVendor = (field: keyof ReceiptData['vendor'], value: string) => {
     onChange({ ...data, vendor: { ...data.vendor, [field]: value } });
   };
@@ -259,14 +270,14 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
               <Input
                 label="Qty"
                 type="number"
-                value={item.quantity}
+                value={numVal(item.quantity)}
                 onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 0)}
               />
               <Input
-                label="Price"
+                label={`Price (${sym})`}
                 type="number"
                 step="0.01"
-                value={item.price}
+                value={numVal(item.price)}
                 onChange={(e) => updateItem(index, 'price', parseFloat(e.target.value) || 0)}
               />
             </div>
@@ -276,10 +287,10 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
 
       <Section title="Gratuity">
         <Input
-          label="Tip"
+          label={`Tip (${sym})`}
           type="number"
           step="0.01"
-          value={data.tip || 0}
+          value={numVal(data.tip || 0)}
           onChange={(e) => updateTip(parseFloat(e.target.value) || 0)}
         />
       </Section>
@@ -303,6 +314,7 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
 
 // Quote Editor
 function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateVendor = (field: keyof QuoteData['vendor'], value: string) => {
     onChange({ ...data, vendor: { ...data.vendor, [field]: value } });
   };
@@ -419,13 +431,13 @@ function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: Ass
               <Input
                 label="Qty"
                 type="number"
-                value={item.quantity}
+                value={numVal(item.quantity)}
                 onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 0)}
               />
               <Input
-                label="Unit Price"
+                label={`Unit Price (${sym})`}
                 type="number"
-                value={item.unitPrice}
+                value={numVal(item.unitPrice)}
                 onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
               />
             </div>
@@ -435,9 +447,9 @@ function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: Ass
 
       <Section title="Discount">
         <Input
-          label="Discount Amount"
+          label={`Discount Amount (${sym})`}
           type="number"
-          value={data.discount || 0}
+          value={numVal(data.discount || 0)}
           onChange={(e) => {
             const discount = parseFloat(e.target.value) || 0;
             onChange({ ...data, discount, total: data.subtotal - discount });
@@ -463,6 +475,7 @@ function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: Ass
 
 // Contract Editor
 function ContractEditor({ data, onChange }: { data: ContractData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateProvider = (field: keyof ContractData['parties']['provider'], value: string) => {
     onChange({
       ...data,
@@ -549,9 +562,9 @@ function ContractEditor({ data, onChange }: { data: ContractData; onChange: (dat
 
       <Section title="Compensation">
         <Input
-          label="Total Value"
+          label={`Total Value (${sym})`}
           type="number"
-          value={data.totalValue}
+          value={numVal(data.totalValue)}
           onChange={(e) => onChange({ ...data, totalValue: parseFloat(e.target.value) || 0 })}
         />
         <Input
@@ -601,6 +614,7 @@ function ContractEditor({ data, onChange }: { data: ContractData; onChange: (dat
 
 // Paper Receipt Editor
 function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateStore = (field: keyof PaperReceiptData['store'], value: string) => {
     onChange({ ...data, store: { ...data.store, [field]: value } });
   };
@@ -712,14 +726,14 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
               <Input
                 label="Qty"
                 type="number"
-                value={item.quantity}
+                value={numVal(item.quantity)}
                 onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 0)}
               />
               <Input
-                label="Price"
+                label={`Price (${sym})`}
                 type="number"
                 step="0.01"
-                value={item.unitPrice}
+                value={numVal(item.unitPrice)}
                 onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
               />
             </div>
@@ -732,6 +746,7 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
 
 // Hotel Folio Editor
 function HotelFolioEditor({ data, onChange }: { data: HotelFolioData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateHotel = (field: keyof HotelFolioData['hotel'], value: string) => {
     onChange({ ...data, hotel: { ...data.hotel, [field]: value } });
   };
@@ -803,7 +818,7 @@ function HotelFolioEditor({ data, onChange }: { data: HotelFolioData; onChange: 
           <Input
             label="Nights"
             type="number"
-            value={data.nights}
+            value={numVal(data.nights)}
             onChange={(e) => onChange({ ...data, nights: parseInt(e.target.value) || 0 })}
           />
         </div>
@@ -902,10 +917,10 @@ function HotelFolioEditor({ data, onChange }: { data: HotelFolioData; onChange: 
               onChange={(e) => updateCharge(index, 'description', e.target.value)}
             />
             <Input
-              label="Amount"
+              label={`Amount (${sym})`}
               type="number"
               step="0.01"
-              value={charge.amount}
+              value={numVal(charge.amount)}
               onChange={(e) => updateCharge(index, 'amount', parseFloat(e.target.value) || 0)}
             />
           </div>
@@ -917,6 +932,7 @@ function HotelFolioEditor({ data, onChange }: { data: HotelFolioData; onChange: 
 
 // Airline Receipt Editor
 function AirlineReceiptEditor({ data, onChange }: { data: AirlineReceiptData; onChange: (data: AssetData) => void }) {
+  const sym = useCurrencySymbol();
   const updateAirline = (field: keyof AirlineReceiptData['airline'], value: string) => {
     onChange({ ...data, airline: { ...data.airline, [field]: value } });
   };
@@ -1092,38 +1108,38 @@ function AirlineReceiptEditor({ data, onChange }: { data: AirlineReceiptData; on
 
       <Section title="Fare Breakdown">
         <Input
-          label="Base Fare"
+          label={`Base Fare (${sym})`}
           type="number"
           step="0.01"
-          value={data.fareBreakdown.baseFare}
+          value={numVal(data.fareBreakdown.baseFare)}
           onChange={(e) => updateFareBreakdown('baseFare', parseFloat(e.target.value) || 0)}
         />
         <Input
-          label="Taxes"
+          label={`Taxes (${sym})`}
           type="number"
           step="0.01"
-          value={data.fareBreakdown.taxes}
+          value={numVal(data.fareBreakdown.taxes)}
           onChange={(e) => updateFareBreakdown('taxes', parseFloat(e.target.value) || 0)}
         />
         <Input
-          label="Fees"
+          label={`Fees (${sym})`}
           type="number"
           step="0.01"
-          value={data.fareBreakdown.fees}
+          value={numVal(data.fareBreakdown.fees)}
           onChange={(e) => updateFareBreakdown('fees', parseFloat(e.target.value) || 0)}
         />
         <Input
-          label="Baggage"
+          label={`Baggage (${sym})`}
           type="number"
           step="0.01"
-          value={data.fareBreakdown.baggage || 0}
+          value={numVal(data.fareBreakdown.baggage || 0)}
           onChange={(e) => updateFareBreakdown('baggage', parseFloat(e.target.value) || 0)}
         />
         <Input
-          label="Seat Selection"
+          label={`Seat Selection (${sym})`}
           type="number"
           step="0.01"
-          value={data.fareBreakdown.seatSelection || 0}
+          value={numVal(data.fareBreakdown.seatSelection || 0)}
           onChange={(e) => updateFareBreakdown('seatSelection', parseFloat(e.target.value) || 0)}
         />
       </Section>

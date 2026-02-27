@@ -206,7 +206,7 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
                 </div>
 
                 {/* Timeline (last 30 days) */}
-                {timeline.length > 0 && (
+                {timeline.length > 0 && maxTimelineCount > 0 && (
                   <div>
                     <div className="flex items-center gap-2 mb-4">
                       <BarChart3 className="w-4 h-4 text-ramp-gray-600" />
