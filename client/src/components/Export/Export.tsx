@@ -17,10 +17,42 @@ import {
 import { Button, Card, CardContent, Logo, Badge } from '../ui';
 import { useStore } from '../../hooks/useStore';
 import { exportPdf, exportJpg, downloadBlob } from '../../services/api';
-import type { AssetType, AssetData, InvoiceData, ReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../../types';
+import type { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../../types';
 import { AssetPreview } from '../Editor/AssetPreview';
 import { getLogoUrl } from '../../utils/logo';
 import { getCachedLogoColor } from '../../hooks/useLogoColors';
+
+const TYPE_LABELS: Record<AssetType, string> = {
+  invoice: 'Invoice',
+  receipt: 'Receipt',
+  paper_receipt: 'Receipt',
+  hotel_folio: 'Hotel_Folio',
+  airline_receipt: 'Airline_Receipt',
+  quote: 'Quote',
+  contract: 'Contract',
+};
+
+function getVendorAndDate(type: AssetType, data: AssetData): { vendor: string; date: string } {
+  switch (type) {
+    case 'invoice': { const d = data as InvoiceData; return { vendor: d.vendor?.name || '', date: d.date || '' }; }
+    case 'receipt': { const d = data as ReceiptData; return { vendor: d.vendor?.name || '', date: d.date || '' }; }
+    case 'paper_receipt': { const d = data as PaperReceiptData; return { vendor: d.store?.name || '', date: d.date || '' }; }
+    case 'hotel_folio': { const d = data as HotelFolioData; return { vendor: d.hotel?.name || '', date: d.checkIn || '' }; }
+    case 'airline_receipt': { const d = data as AirlineReceiptData; return { vendor: d.airline?.name || '', date: d.bookingDate || '' }; }
+    case 'quote': { const d = data as QuoteData; return { vendor: d.vendor?.name || '', date: d.date || '' }; }
+    case 'contract': { const d = data as ContractData; return { vendor: d.parties?.provider?.name || '', date: d.date || '' }; }
+    default: return { vendor: '', date: '' };
+  }
+}
+
+function buildFilename(type: AssetType, data: AssetData, ext: string, invoiceIndex?: number): string {
+  const { vendor, date } = getVendorAndDate(type, data);
+  const label = TYPE_LABELS[type] || type;
+  const vendorPart = vendor ? `_${vendor.replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_')}` : '';
+  const datePart = date ? `_${date}` : '';
+  const indexPart = invoiceIndex !== undefined ? `_${invoiceIndex + 1}` : '';
+  return `${label}${vendorPart}${datePart}${indexPart}.${ext}`;
+}
 
 const ASSET_ICONS: Record<AssetType, typeof FileText> = {
   invoice: FileText,
@@ -83,7 +115,7 @@ interface ExportStatus {
 }
 
 export function Export() {
-  const { selectedAssets, generatedAssets, generatedInvoices, setStep, reset, company, selectedCurrency } = useStore();
+  const { selectedAssets, generatedAssets, generatedInvoices, setStep, reset, selectedCurrency } = useStore();
   const [exportStatuses, setExportStatuses] = useState<ExportStatus[]>([]);
   const [isExporting, setIsExporting] = useState(false);
 
@@ -113,9 +145,7 @@ export function Export() {
         blob = await exportJpg(type, data, selectedCurrency, primaryColor);
       }
 
-      const companyName = company?.name.replace(/\s+/g, '_') || 'company';
-      const invoiceSuffix = invoiceIndex !== undefined ? `_${invoiceIndex + 1}` : '';
-      const filename = `${companyName}_${type}${invoiceSuffix}_${Date.now()}.${format}`;
+      const filename = buildFilename(type, data, format, invoiceIndex);
       downloadBlob(blob, filename);
 
       setExportStatuses((prev) =>
