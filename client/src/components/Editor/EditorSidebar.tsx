@@ -1,5 +1,7 @@
+import { Trash2, Plus } from 'lucide-react';
 import { Input } from '../ui';
 import type { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, HotelFolioData, AirlineReceiptData, QuoteData, ContractData } from '../../types';
+import { generateLineItemId } from '../../utils/documentSync';
 
 interface EditorSidebarProps {
   type: AssetType;
@@ -38,6 +40,12 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
     onChange({ ...data, client: { ...data.client, [field]: value } });
   };
 
+  const recalcInvoice = (items: InvoiceData['lineItems']) => {
+    const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
+    const tax = Math.round(subtotal * 0.0875 * 100) / 100;
+    return { subtotal, tax, total: Math.round((subtotal + tax) * 100) / 100 };
+  };
+
   const updateLineItem = (index: number, field: keyof InvoiceData['lineItems'][0], value: string | number) => {
     const newLineItems = [...data.lineItems];
     newLineItems[index] = { ...newLineItems[index], [field]: value };
@@ -46,10 +54,18 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
       newLineItems[index].total = Math.round(newLineItems[index].quantity * newLineItems[index].unitPrice * 100) / 100;
     }
     
-    const subtotal = Math.round(newLineItems.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
-    const tax = Math.round(subtotal * 0.0875 * 100) / 100;
-    
-    onChange({ ...data, lineItems: newLineItems, subtotal, tax, total: Math.round((subtotal + tax) * 100) / 100 });
+    onChange({ ...data, lineItems: newLineItems, ...recalcInvoice(newLineItems) });
+  };
+
+  const addLineItem = () => {
+    const newLineItems = [...data.lineItems, { id: generateLineItemId(), description: '', quantity: 1, unitPrice: 0, total: 0 }];
+    onChange({ ...data, lineItems: newLineItems, ...recalcInvoice(newLineItems) });
+  };
+
+  const deleteLineItem = (index: number) => {
+    if (data.lineItems.length <= 1) return;
+    const newLineItems = data.lineItems.filter((_, i) => i !== index);
+    onChange({ ...data, lineItems: newLineItems, ...recalcInvoice(newLineItems) });
   };
 
   return (
@@ -115,14 +131,19 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
         />
       </Section>
 
-      <Section title="Line Items">
+      <Section title="Line Items" action={<AddButton onClick={addLineItem} />}>
         {data.lineItems.map((item, index) => (
           <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
-            <Input
-              label={`Item ${index + 1} Description`}
-              value={item.description}
-              onChange={(e) => updateLineItem(index, 'description', e.target.value)}
-            />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <Input
+                  label={`Item ${index + 1} Description`}
+                  value={item.description}
+                  onChange={(e) => updateLineItem(index, 'description', e.target.value)}
+                />
+              </div>
+              <DeleteButton onClick={() => deleteLineItem(index)} disabled={data.lineItems.length <= 1} />
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <Input
                 label="Qty"
@@ -163,22 +184,28 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
     onChange({ ...data, vendor: { ...data.vendor, [field]: value } });
   };
 
+  const recalcReceipt = (items: ReceiptData['items']) => {
+    const subtotal = Math.round(items.reduce((sum, item) => sum + (item.quantity * item.price), 0) * 100) / 100;
+    const tax = Math.round(subtotal * 0.0875 * 100) / 100;
+    const tip = data.tip || 0;
+    return { subtotal, tax, total: Math.round((subtotal + tax + tip) * 100) / 100 };
+  };
+
   const updateItem = (index: number, field: keyof ReceiptData['items'][0], value: string | number) => {
     const newItems = [...data.items];
     newItems[index] = { ...newItems[index], [field]: value };
-    
-    // Recalculate totals
-    const subtotal = newItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
-    const tax = Math.round(subtotal * 0.0875 * 100) / 100;
-    const tip = data.tip || 0;
-    
-    onChange({ 
-      ...data, 
-      items: newItems, 
-      subtotal: Math.round(subtotal * 100) / 100, 
-      tax, 
-      total: Math.round((subtotal + tax + tip) * 100) / 100 
-    });
+    onChange({ ...data, items: newItems, ...recalcReceipt(newItems) });
+  };
+
+  const addItem = () => {
+    const newItems = [...data.items, { description: '', quantity: 1, price: 0 }];
+    onChange({ ...data, items: newItems, ...recalcReceipt(newItems) });
+  };
+
+  const deleteItem = (index: number) => {
+    if (data.items.length <= 1) return;
+    const newItems = data.items.filter((_, i) => i !== index);
+    onChange({ ...data, items: newItems, ...recalcReceipt(newItems) });
   };
 
   const updateTip = (tipValue: number) => {
@@ -215,14 +242,19 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
         />
       </Section>
 
-      <Section title="Items">
+      <Section title="Items" action={<AddButton onClick={addItem} />}>
         {data.items.map((item, index) => (
           <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
-            <Input
-              label={`Item ${index + 1}`}
-              value={item.description}
-              onChange={(e) => updateItem(index, 'description', e.target.value)}
-            />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <Input
+                  label={`Item ${index + 1}`}
+                  value={item.description}
+                  onChange={(e) => updateItem(index, 'description', e.target.value)}
+                />
+              </div>
+              <DeleteButton onClick={() => deleteItem(index)} disabled={data.items.length <= 1} />
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <Input
                 label="Qty"
@@ -279,6 +311,12 @@ function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: Ass
     onChange({ ...data, client: { ...data.client, [field]: value } });
   };
 
+  const recalcQuote = (items: QuoteData['items']) => {
+    const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+    const discount = data.discount || 0;
+    return { subtotal, total: subtotal - discount };
+  };
+
   const updateItem = (index: number, field: keyof QuoteData['items'][0], value: string | number) => {
     const newItems = [...data.items];
     newItems[index] = { ...newItems[index], [field]: value };
@@ -287,10 +325,18 @@ function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: Ass
       newItems[index].total = newItems[index].quantity * newItems[index].unitPrice;
     }
     
-    const subtotal = newItems.reduce((sum, item) => sum + item.total, 0);
-    const discount = data.discount || 0;
-    
-    onChange({ ...data, items: newItems, subtotal, total: subtotal - discount });
+    onChange({ ...data, items: newItems, ...recalcQuote(newItems) });
+  };
+
+  const addItem = () => {
+    const newItems = [...data.items, { id: generateLineItemId(), description: '', quantity: 1, unitPrice: 0, total: 0 }];
+    onChange({ ...data, items: newItems, ...recalcQuote(newItems) });
+  };
+
+  const deleteItem = (index: number) => {
+    if (data.items.length <= 1) return;
+    const newItems = data.items.filter((_, i) => i !== index);
+    onChange({ ...data, items: newItems, ...recalcQuote(newItems) });
   };
 
   return (
@@ -356,14 +402,19 @@ function QuoteEditor({ data, onChange }: { data: QuoteData; onChange: (data: Ass
         />
       </Section>
 
-      <Section title="Items">
+      <Section title="Items" action={<AddButton onClick={addItem} />}>
         {data.items.map((item, index) => (
           <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
-            <Input
-              label={`Item ${index + 1}`}
-              value={item.description}
-              onChange={(e) => updateItem(index, 'description', e.target.value)}
-            />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <Input
+                  label={`Item ${index + 1}`}
+                  value={item.description}
+                  onChange={(e) => updateItem(index, 'description', e.target.value)}
+                />
+              </div>
+              <DeleteButton onClick={() => deleteItem(index)} disabled={data.items.length <= 1} />
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <Input
                 label="Qty"
@@ -554,6 +605,13 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
     onChange({ ...data, store: { ...data.store, [field]: value } });
   };
 
+  const recalcPaperReceipt = (items: PaperReceiptData['items']) => {
+    const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
+    const taxAmount = Math.round(subtotal * data.taxRate * 100) / 100;
+    const tip = data.tip ? Math.round(data.tip * 100) / 100 : 0;
+    return { subtotal, taxAmount, total: Math.round((subtotal + taxAmount + tip) * 100) / 100 };
+  };
+
   const updateItem = (index: number, field: keyof PaperReceiptData['items'][0], value: string | number) => {
     const newItems = [...data.items];
     newItems[index] = { ...newItems[index], [field]: value };
@@ -562,11 +620,18 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
       newItems[index].total = Math.round(newItems[index].quantity * newItems[index].unitPrice * 100) / 100;
     }
     
-    const subtotal = Math.round(newItems.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
-    const taxAmount = Math.round(subtotal * data.taxRate * 100) / 100;
-    const tip = data.tip ? Math.round(data.tip * 100) / 100 : 0;
-    
-    onChange({ ...data, items: newItems, subtotal, taxAmount, total: Math.round((subtotal + taxAmount + tip) * 100) / 100 });
+    onChange({ ...data, items: newItems, ...recalcPaperReceipt(newItems) });
+  };
+
+  const addItem = () => {
+    const newItems = [...data.items, { name: '', quantity: 1, unitPrice: 0, total: 0 }];
+    onChange({ ...data, items: newItems, ...recalcPaperReceipt(newItems) });
+  };
+
+  const deleteItem = (index: number) => {
+    if (data.items.length <= 1) return;
+    const newItems = data.items.filter((_, i) => i !== index);
+    onChange({ ...data, items: newItems, ...recalcPaperReceipt(newItems) });
   };
 
   return (
@@ -630,14 +695,19 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
         />
       </Section>
 
-      <Section title="Items">
+      <Section title="Items" action={<AddButton onClick={addItem} />}>
         {data.items.map((item, index) => (
           <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
-            <Input
-              label={`Item ${index + 1}`}
-              value={item.name}
-              onChange={(e) => updateItem(index, 'name', e.target.value)}
-            />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <Input
+                  label={`Item ${index + 1}`}
+                  value={item.name}
+                  onChange={(e) => updateItem(index, 'name', e.target.value)}
+                />
+              </div>
+              <DeleteButton onClick={() => deleteItem(index)} disabled={data.items.length <= 1} />
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <Input
                 label="Qty"
@@ -670,24 +740,31 @@ function HotelFolioEditor({ data, onChange }: { data: HotelFolioData; onChange: 
     onChange({ ...data, guest: { ...data.guest, [field]: value } });
   };
 
-  const updateCharge = (index: number, field: keyof HotelFolioData['charges'][0], value: string | number) => {
-    const newCharges = [...data.charges];
-    newCharges[index] = { ...newCharges[index], [field]: value };
-    
-    // Recalculate totals
-    const roomCharges = newCharges.filter(c => c.category === 'Room');
-    const incidentalCharges = newCharges.filter(c => c.category !== 'Room');
+  const recalcFolio = (charges: HotelFolioData['charges']) => {
+    const roomCharges = charges.filter(c => c.category === 'Room');
+    const incidentalCharges = charges.filter(c => c.category !== 'Room');
     const roomTotal = roomCharges.reduce((sum, c) => sum + c.amount, 0);
     const incidentalsTotal = incidentalCharges.reduce((sum, c) => sum + c.amount, 0);
     const taxTotal = data.taxes.reduce((sum, t) => sum + t.amount, 0);
-    
-    onChange({ 
-      ...data, 
-      charges: newCharges, 
-      roomTotal, 
-      incidentalsTotal, 
-      total: roomTotal + incidentalsTotal + taxTotal 
-    });
+    return { roomTotal, incidentalsTotal, total: roomTotal + incidentalsTotal + taxTotal };
+  };
+
+  const updateCharge = (index: number, field: keyof HotelFolioData['charges'][0], value: string | number) => {
+    const newCharges = [...data.charges];
+    newCharges[index] = { ...newCharges[index], [field]: value };
+    onChange({ ...data, charges: newCharges, ...recalcFolio(newCharges) });
+  };
+
+  const addCharge = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const newCharges = [...data.charges, { category: 'Room', description: '', date: today, amount: 0 }];
+    onChange({ ...data, charges: newCharges, ...recalcFolio(newCharges) });
+  };
+
+  const deleteCharge = (index: number) => {
+    if (data.charges.length <= 1) return;
+    const newCharges = data.charges.filter((_, i) => i !== index);
+    onChange({ ...data, charges: newCharges, ...recalcFolio(newCharges) });
   };
 
   return (
@@ -800,21 +877,24 @@ function HotelFolioEditor({ data, onChange }: { data: HotelFolioData; onChange: 
         />
       </Section>
 
-      <Section title="Charges">
+      <Section title="Charges" action={<AddButton onClick={addCharge} label="Add Charge" />}>
         {data.charges.map((charge, index) => (
           <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                label="Category"
-                value={charge.category}
-                onChange={(e) => updateCharge(index, 'category', e.target.value)}
-              />
-              <Input
-                label="Date"
-                type="date"
-                value={charge.date}
-                onChange={(e) => updateCharge(index, 'date', e.target.value)}
-              />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 grid grid-cols-2 gap-2">
+                <Input
+                  label="Category"
+                  value={charge.category}
+                  onChange={(e) => updateCharge(index, 'category', e.target.value)}
+                />
+                <Input
+                  label="Date"
+                  type="date"
+                  value={charge.date}
+                  onChange={(e) => updateCharge(index, 'date', e.target.value)}
+                />
+              </div>
+              <DeleteButton onClick={() => deleteCharge(index)} disabled={data.charges.length <= 1} />
             </div>
             <Input
               label="Description"
@@ -862,6 +942,24 @@ function AirlineReceiptEditor({ data, onChange }: { data: AirlineReceiptData; on
     } else {
       newFlights[index] = { ...newFlights[index], [field]: value };
     }
+    onChange({ ...data, flights: newFlights });
+  };
+
+  const addFlight = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const newFlights = [...data.flights, {
+      flightNumber: '',
+      date: today,
+      departure: { airport: '', code: '', time: '' },
+      arrival: { airport: '', code: '', time: '' },
+      class: 'Economy',
+    }];
+    onChange({ ...data, flights: newFlights });
+  };
+
+  const deleteFlight = (index: number) => {
+    if (data.flights.length <= 1) return;
+    const newFlights = data.flights.filter((_, i) => i !== index);
     onChange({ ...data, flights: newFlights });
   };
 
@@ -928,21 +1026,24 @@ function AirlineReceiptEditor({ data, onChange }: { data: AirlineReceiptData; on
         />
       </Section>
 
-      <Section title="Flights">
+      <Section title="Flights" action={<AddButton onClick={addFlight} label="Add Flight" />}>
         {data.flights.map((flight, index) => (
           <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                label="Flight #"
-                value={flight.flightNumber}
-                onChange={(e) => updateFlight(index, 'flightNumber', e.target.value)}
-              />
-              <Input
-                label="Date"
-                type="date"
-                value={flight.date}
-                onChange={(e) => updateFlight(index, 'date', e.target.value)}
-              />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 grid grid-cols-2 gap-2">
+                <Input
+                  label="Flight #"
+                  value={flight.flightNumber}
+                  onChange={(e) => updateFlight(index, 'flightNumber', e.target.value)}
+                />
+                <Input
+                  label="Date"
+                  type="date"
+                  value={flight.date}
+                  onChange={(e) => updateFlight(index, 'date', e.target.value)}
+                />
+              </div>
+              <DeleteButton onClick={() => deleteFlight(index)} disabled={data.flights.length <= 1} />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Input
@@ -1030,14 +1131,41 @@ function AirlineReceiptEditor({ data, onChange }: { data: AirlineReceiptData; on
   );
 }
 
-// Section component
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-ramp-slate mb-3 uppercase tracking-wide">{title}</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-ramp-slate uppercase tracking-wide">{title}</h3>
+        {action}
+      </div>
       <div className="space-y-3">
         {children}
       </div>
     </div>
+  );
+}
+
+function AddButton({ onClick, label = 'Add' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 text-xs font-medium text-ramp-sage hover:text-ramp-slate transition-colors"
+    >
+      <Plus className="w-3.5 h-3.5" />
+      {label}
+    </button>
+  );
+}
+
+function DeleteButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="p-1 text-ramp-sage hover:text-red-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+      title="Remove item"
+    >
+      <Trash2 className="w-3.5 h-3.5" />
+    </button>
   );
 }

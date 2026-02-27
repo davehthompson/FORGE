@@ -1,5 +1,27 @@
 import OpenAI from 'openai';
+import crypto from 'crypto';
 import { CompanyProfile, AssetType, AssetData, RelatedAssetContext, QuoteData, ContractData, InvoiceConfig, InvoiceData, ReceiptData, HotelFolioData, AirlineReceiptData } from '../types.js';
+
+function ensureLineItemIds(type: AssetType, data: AssetData): AssetData {
+  if (type === 'invoice') {
+    const d = data as InvoiceData;
+    if (d.lineItems?.length) {
+      d.lineItems = d.lineItems.map(item => ({
+        ...item,
+        id: item.id || crypto.randomUUID(),
+      }));
+    }
+  } else if (type === 'quote') {
+    const d = data as QuoteData;
+    if (d.items?.length) {
+      d.items = d.items.map(item => ({
+        ...item,
+        id: item.id || crypto.randomUUID(),
+      }));
+    }
+  }
+  return data;
+}
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -277,7 +299,7 @@ Return ONLY valid JSON, no markdown or explanation.`;
   try {
     onStatus('Completing generation...');
     const parsed = JSON.parse(jsonMatch[0]) as AssetData;
-    return recalculateTotals(type, parsed);
+    return ensureLineItemIds(type, recalculateTotals(type, parsed));
   } catch {
     throw new Error('Failed to parse JSON response from OpenAI');
   }
@@ -345,7 +367,7 @@ Return ONLY valid JSON, no markdown or explanation.`,
   
   try {
     const parsed = JSON.parse(jsonMatch[0]) as AssetData;
-    return recalculateTotals(type, parsed);
+    return ensureLineItemIds(type, recalculateTotals(type, parsed));
   } catch {
     throw new Error('Failed to parse JSON response from OpenAI');
   }
@@ -911,7 +933,7 @@ JSON Structure:
     "email": "accounts@${company.domain}"
   },
   "lineItems": [
-    { "description": "string (DETAILED specific product/service with model numbers, specs, or deliverables)", "quantity": number, "unitPrice": number, "total": number }
+    { "id": "string (unique UUID v4)", "description": "string (DETAILED specific product/service with model numbers, specs, or deliverables)", "quantity": number, "unitPrice": number, "total": number }
   ],
   "subtotal": number,
   "tax": number (calculate ~8% tax),
@@ -1085,7 +1107,7 @@ JSON Structure:
     "email": "procurement@${company.domain}"
   },
   "items": [
-    { "description": "string (DETAILED service with scope, deliverables, or timeframe)", "quantity": number (hours or units), "unitPrice": number, "total": number }
+    { "id": "string (unique UUID v4)", "description": "string (DETAILED service with scope, deliverables, or timeframe)", "quantity": number (hours or units), "unitPrice": number, "total": number }
   ],
   "subtotal": number,
   "discount": number (optional volume discount, can be 0),
@@ -1378,7 +1400,7 @@ QUOTE DETAILS TO REFERENCE:
 - Vendor Phone: ${quote.vendor.phone}
 
 QUOTED LINE ITEMS:
-${quote.items.map(item => `- ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
+${quote.items.map(item => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
 
 CLIENT INFORMATION:
 - Client Name: ${quote.client.name}
@@ -1474,8 +1496,8 @@ AMOUNT VERIFICATION:
     }
 
     const lineItemsSource = quote ? `
-QUOTED LINE ITEMS (use these as basis for invoice):
-${quote.items.map(item => `- ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
+QUOTED LINE ITEMS (use these as basis for invoice - REUSE the quote item IDs):
+${quote.items.map(item => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
 ` : contract ? `
 CONTRACT SERVICES (invoice for these services):
 ${contract.services.map(service => `- ${service}`).join('\n')}
@@ -1539,7 +1561,7 @@ JSON Structure:
     "email": "accounts@${company.domain}"
   },
   "lineItems": [
-    { "description": "string (service from quote/contract with phase/progress indicator)", "quantity": number, "unitPrice": number, "total": number }
+    { "id": "string (unique UUID v4 - reuse the quote item ID if this line item maps to a quoted item)", "description": "string (service from quote/contract with phase/progress indicator)", "quantity": number, "unitPrice": number, "total": number }
   ],
   "subtotal": number,
   "tax": number (calculate ~8% tax),

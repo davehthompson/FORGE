@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CompanyProfile, AssetType, AssetData, InvoiceData } from '../types';
+import type { CompanyProfile, AssetType, AssetData, InvoiceData, QuoteData, ContractData } from '../types';
 
 type AppMode = 'company' | 'quick_receipt';
 type AppStep = 'home' | 'input' | 'summary' | 'category' | 'select' | 'quick_receipt' | 'editor' | 'export';
@@ -50,6 +50,13 @@ interface AppState {
   setGeneratedInvoices: (invoices: InvoiceData[]) => void;
   addGeneratedInvoice: (invoice: InvoiceData) => void;
   updateGeneratedInvoice: (index: number, data: Partial<InvoiceData>) => void;
+
+  // Batch update for cross-document sync
+  batchUpdateDocuments: (updates: {
+    quote?: QuoteData | null;
+    contract?: ContractData | null;
+    invoices?: InvoiceData[];
+  }) => void;
 
   // Current editing
   currentAsset: AssetType | null;
@@ -161,6 +168,29 @@ export const useStore = create<AppState>((set) => ({
         invoices[index] = { ...invoices[index], ...data };
       }
       return { generatedInvoices: invoices };
+    }),
+
+  batchUpdateDocuments: (updates) =>
+    set((state) => {
+      const newState: Partial<AppState> = {};
+      const newAssets = { ...state.generatedAssets };
+
+      if (updates.quote !== undefined) {
+        newAssets.quote = updates.quote;
+      }
+      if (updates.contract !== undefined) {
+        newAssets.contract = updates.contract;
+      }
+      newState.generatedAssets = newAssets;
+
+      if (updates.invoices !== undefined) {
+        newState.generatedInvoices = updates.invoices;
+        if (updates.invoices.length > 0) {
+          newAssets.invoice = updates.invoices[0];
+        }
+      }
+
+      return newState;
     }),
 
   setCurrentAsset: (asset) => set({ currentAsset: asset }),

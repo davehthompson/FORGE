@@ -18,9 +18,10 @@ import {
 } from 'lucide-react';
 import { Button, Logo } from '../ui';
 import { useStore } from '../../hooks/useStore';
-import type { AssetType, AssetData, InvoiceData } from '../../types';
+import type { AssetType, AssetData, InvoiceData, QuoteData, ContractData } from '../../types';
 import { AssetPreview } from './AssetPreview';
 import { EditorSidebar } from './EditorSidebar';
+import { syncConnectedDocuments, hasConnectedDocuments, ensureLineItemIds } from '../../utils/documentSync';
 
 const ASSET_ICONS: Record<AssetType, typeof FileText> = {
   invoice: FileText,
@@ -56,10 +57,30 @@ export function Editor() {
     currentInvoiceIndex,
     setCurrentInvoiceIndex,
     updateGeneratedInvoice,
+    batchUpdateDocuments,
     setStep,
     mode,
     reset,
   } = useStore();
+
+  // Backfill IDs on line items that were generated before this feature
+  useEffect(() => {
+    const quote = generatedAssets.quote as QuoteData | null;
+    if (quote?.items?.length && !quote.items[0].id) {
+      setGeneratedAsset('quote', { ...quote, items: ensureLineItemIds(quote.items) });
+    }
+    const invoices = generatedInvoices.length > 0 ? generatedInvoices : [];
+    invoices.forEach((inv, i) => {
+      if (inv?.lineItems?.length && !inv.lineItems[0].id) {
+        updateGeneratedInvoice(i, { lineItems: ensureLineItemIds(inv.lineItems) });
+      }
+    });
+    const singleInvoice = generatedAssets.invoice as InvoiceData | null;
+    if (singleInvoice?.lineItems?.length && !singleInvoice.lineItems[0].id && invoices.length === 0) {
+      setGeneratedAsset('invoice', { ...singleInvoice, lineItems: ensureLineItemIds(singleInvoice.lineItems) });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const DOC_WIDTH = 794;
   const PREVIEW_PADDING = 96;
@@ -132,10 +153,37 @@ export function Editor() {
         : generatedAssets[currentAsset])
     : null;
 
+  const isConnected = hasConnectedDocuments(selectedAssets, generatedAssets, generatedInvoices);
+
   const handleDataChange = (newData: AssetData) => {
-    if (currentAsset) {
+    if (!currentAsset) return;
+
+    const syncableTypes: AssetType[] = ['quote', 'contract', 'invoice'];
+    if (isConnected && syncableTypes.includes(currentAsset)) {
+      const invoiceList = generatedInvoices.length > 0
+        ? generatedInvoices
+        : generatedAssets.invoice
+          ? [generatedAssets.invoice as InvoiceData]
+          : [];
+
+      const result = syncConnectedDocuments(
+        currentAsset,
+        newData as QuoteData | ContractData | InvoiceData,
+        isViewingInvoice ? currentInvoiceIndex : null,
+        {
+          quote: (generatedAssets.quote as QuoteData) || null,
+          contract: (generatedAssets.contract as ContractData) || null,
+          invoices: invoiceList,
+        },
+      );
+
+      batchUpdateDocuments({
+        quote: result.quote,
+        contract: result.contract,
+        invoices: result.invoices,
+      });
+    } else {
       if (isViewingInvoice && hasMultipleInvoices) {
-        // Update the specific invoice in the array
         updateGeneratedInvoice(currentInvoiceIndex, newData as Partial<InvoiceData>);
       } else {
         setGeneratedAsset(currentAsset, newData);

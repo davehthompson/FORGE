@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { CompanyProfile, AssetType, InvoiceData, QuoteData, ContractData, AssetData, InvoiceConfig, RelatedAssetContext } from '../types.js';
 
 export const TEST_DOMAIN = 'ramptest.com';
@@ -43,6 +44,14 @@ function futureDate(daysFromNow: number): string {
   return d.toISOString().split('T')[0];
 }
 
+const MOCK_LINE_ITEM_IDS = [
+  'a1b2c3d4-e5f6-4a7b-8c9d-000000000001',
+  'a1b2c3d4-e5f6-4a7b-8c9d-000000000002',
+  'a1b2c3d4-e5f6-4a7b-8c9d-000000000003',
+  'a1b2c3d4-e5f6-4a7b-8c9d-000000000004',
+  'a1b2c3d4-e5f6-4a7b-8c9d-000000000005',
+];
+
 function getMockQuote(): QuoteData {
   return {
     quoteNumber: 'QT-2026-0847',
@@ -61,11 +70,11 @@ function getMockQuote(): QuoteData {
       email: 'procurement@ramp.com',
     },
     items: [
-      { description: 'Enterprise Cloud Compute Instances (12-month term)', quantity: 24, unitPrice: 850, total: 20400 },
-      { description: 'Managed Kubernetes Cluster - Production', quantity: 2, unitPrice: 3200, total: 6400 },
-      { description: 'Dedicated Load Balancer with SSL Termination', quantity: 4, unitPrice: 475, total: 1900 },
-      { description: 'Object Storage - 50TB Tier with CDN', quantity: 1, unitPrice: 2800, total: 2800 },
-      { description: 'Premium 24/7 Technical Support Plan', quantity: 1, unitPrice: 4500, total: 4500 },
+      { id: MOCK_LINE_ITEM_IDS[0], description: 'Enterprise Cloud Compute Instances (12-month term)', quantity: 24, unitPrice: 850, total: 20400 },
+      { id: MOCK_LINE_ITEM_IDS[1], description: 'Managed Kubernetes Cluster - Production', quantity: 2, unitPrice: 3200, total: 6400 },
+      { id: MOCK_LINE_ITEM_IDS[2], description: 'Dedicated Load Balancer with SSL Termination', quantity: 4, unitPrice: 475, total: 1900 },
+      { id: MOCK_LINE_ITEM_IDS[3], description: 'Object Storage - 50TB Tier with CDN', quantity: 1, unitPrice: 2800, total: 2800 },
+      { id: MOCK_LINE_ITEM_IDS[4], description: 'Premium 24/7 Technical Support Plan', quantity: 1, unitPrice: 4500, total: 4500 },
     ],
     subtotal: 36000,
     discount: 3600,
@@ -126,11 +135,11 @@ function getMockInvoice(config?: InvoiceConfig, relatedAssets?: RelatedAssetCont
   const tax = Math.round(targetSubtotal * taxRate * 100) / 100;
 
   const baseItems = [
-    { description: 'Enterprise Cloud Compute Instances (12-month term)', quantity: 24, unitPrice: 850, total: 20400 },
-    { description: 'Managed Kubernetes Cluster - Production', quantity: 2, unitPrice: 3200, total: 6400 },
-    { description: 'Dedicated Load Balancer with SSL Termination', quantity: 4, unitPrice: 475, total: 1900 },
-    { description: 'Object Storage - 50TB Tier with CDN', quantity: 1, unitPrice: 2800, total: 2800 },
-    { description: 'Premium 24/7 Technical Support Plan', quantity: 1, unitPrice: 4500, total: 4500 },
+    { id: MOCK_LINE_ITEM_IDS[0], description: 'Enterprise Cloud Compute Instances (12-month term)', quantity: 24, unitPrice: 850, total: 20400 },
+    { id: MOCK_LINE_ITEM_IDS[1], description: 'Managed Kubernetes Cluster - Production', quantity: 2, unitPrice: 3200, total: 6400 },
+    { id: MOCK_LINE_ITEM_IDS[2], description: 'Dedicated Load Balancer with SSL Termination', quantity: 4, unitPrice: 475, total: 1900 },
+    { id: MOCK_LINE_ITEM_IDS[3], description: 'Object Storage - 50TB Tier with CDN', quantity: 1, unitPrice: 2800, total: 2800 },
+    { id: MOCK_LINE_ITEM_IDS[4], description: 'Premium 24/7 Technical Support Plan', quantity: 1, unitPrice: 4500, total: 4500 },
   ];
 
   let items: InvoiceData['lineItems'];
@@ -140,7 +149,7 @@ function getMockInvoice(config?: InvoiceConfig, relatedAssets?: RelatedAssetCont
       const adjTotal = Math.round(item.total * ratio * 100) / 100;
       const adjQty = Math.max(1, Math.round(item.quantity * ratio));
       const adjUnitPrice = Math.round((adjTotal / adjQty) * 100) / 100;
-      return { description: item.description, quantity: adjQty, unitPrice: adjUnitPrice, total: adjTotal };
+      return { id: item.id, description: item.description, quantity: adjQty, unitPrice: adjUnitPrice, total: adjTotal };
     });
     const itemsTotal = items.reduce((sum, i) => sum + i.total, 0);
     const diff = Math.round((targetSubtotal - itemsTotal) * 100) / 100;
