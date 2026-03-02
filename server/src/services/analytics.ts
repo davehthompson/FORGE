@@ -7,6 +7,7 @@ export interface GenerationEvent {
   companyDomain: string;
   currency: string;
   flowType: 'standard' | 'connected' | 'quick_receipt';
+  apiService?: string;
 }
 
 let sql: ReturnType<typeof neon> | null = null;
@@ -36,8 +37,12 @@ async function ensureTable() {
         company_name TEXT NOT NULL DEFAULT '',
         company_domain TEXT NOT NULL DEFAULT '',
         currency TEXT NOT NULL DEFAULT 'USD',
-        flow_type TEXT NOT NULL DEFAULT 'standard'
+        flow_type TEXT NOT NULL DEFAULT 'standard',
+        api_service TEXT NOT NULL DEFAULT ''
       )
+    `;
+    await client`
+      ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS api_service TEXT NOT NULL DEFAULT ''
     `;
     tableReady = true;
   } catch (err) {
@@ -53,8 +58,8 @@ export function trackGeneration(event: GenerationEvent): void {
     .then(() => {
       if (!client) return;
       return client`
-        INSERT INTO generation_events (asset_type, spending_category, company_name, company_domain, currency, flow_type)
-        VALUES (${event.assetType}, ${event.spendingCategory}, ${event.companyName}, ${event.companyDomain}, ${event.currency}, ${event.flowType})
+        INSERT INTO generation_events (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service)
+        VALUES (${event.assetType}, ${event.spendingCategory}, ${event.companyName}, ${event.companyDomain}, ${event.currency}, ${event.flowType}, ${event.apiService ?? ''})
       `;
     })
     .catch((err) => {

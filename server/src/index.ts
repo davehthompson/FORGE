@@ -6,6 +6,8 @@ import { enrichRouter } from './routes/enrich.js';
 import { generateRouter } from './routes/generate.js';
 import { exportRouter } from './routes/export.js';
 import { analyticsRouter } from './routes/analytics.js';
+import { v1Router } from './routes/v1.js';
+import { apiKeyAuth } from './middleware/apiKey.js';
 
 dotenv.config();
 
@@ -27,6 +29,7 @@ app.use('/api/enrich', enrichRouter);
 app.use('/api/generate', generateRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/analytics', analyticsRouter);
+app.use('/api/v1', apiKeyAuth, v1Router);
 
 // Error handling
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
