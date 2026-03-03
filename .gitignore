@@ -44,3 +44,5 @@ client/public/chromium-pack.tar
 
 # Misc
 *.local
+.vercel
+.env*.local
