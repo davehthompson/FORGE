@@ -48,14 +48,15 @@ export async function generateAssetStreaming(
   spendingCategory: string,
   onStatus: (status: string) => void,
   relatedAssets?: RelatedAssetContext,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  lineItemCount?: number
 ): Promise<AssetData> {
   const response = await fetch('/api/generate/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ type, company, spendingCategory, relatedAssets, currency }),
+    body: JSON.stringify({ type, company, spendingCategory, relatedAssets, currency, lineItemCount }),
   });
 
   if (!response.ok) {
@@ -207,7 +208,8 @@ export async function generateConnectedAssetsStreaming(
   spendingCategory: string,
   onStatus: (type: AssetType, status: string, invoiceIndex?: number) => void,
   invoiceCount: number = 2,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  lineItemCount?: number
 ): Promise<ConnectedGenerationResult> {
   const results: Partial<Record<AssetType, AssetData>> = {};
   const invoices: InvoiceData[] = [];
@@ -256,6 +258,7 @@ export async function generateConnectedAssetsStreaming(
               spendingCategory,
               relatedAssets: invoiceRelatedAssets,
               currency,
+              lineItemCount,
               invoiceConfig: {
                 invoiceNumber,
                 totalInvoices: invoiceCount,
@@ -333,7 +336,8 @@ export async function generateConnectedAssetsStreaming(
       spendingCategory,
       (status) => onStatus(type, status),
       relatedAssets,
-      currency
+      currency,
+      lineItemCount
     );
     
     results[type] = data;

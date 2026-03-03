@@ -201,13 +201,14 @@ export async function generateAssetContentStreaming(
   onStatus: (status: string) => void,
   relatedAssets?: RelatedAssetContext,
   invoiceConfig?: InvoiceConfig,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  lineItemCount?: number
 ): Promise<AssetData> {
   const openaiClient = getOpenAIClient();
   const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
   const prompt = relatedAssets 
-    ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency)
-    : buildPrompt(type, company, spendingCategory, currency);
+    ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency, lineItemCount)
+    : buildPrompt(type, company, spendingCategory, currency, lineItemCount);
   const triggers = STATUS_TRIGGERS[type];
   const triggeredFields = new Set<string>();
   let fullContent = '';
@@ -309,12 +310,13 @@ export async function generateAssetContent(
   type: AssetType,
   company: CompanyProfile,
   spendingCategory: string,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  lineItemCount?: number
 ): Promise<AssetData> {
   const openaiClient = getOpenAIClient();
   const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
   
-  const prompt = buildPrompt(type, company, spendingCategory, currency);
+  const prompt = buildPrompt(type, company, spendingCategory, currency, lineItemCount);
   
   const response = await openaiClient.chat.completions.create({
     model: 'gpt-4',
@@ -843,7 +845,7 @@ Return ONLY valid JSON, no markdown or explanation.`;
   }
 }
 
-function buildPrompt(type: AssetType, company: CompanyProfile, spendingCategory: string, currency: string = 'USD'): string {
+function buildPrompt(type: AssetType, company: CompanyProfile, spendingCategory: string, currency: string = 'USD', lineItemCount?: number): string {
   // Calculate actual dates for realistic document generation
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
@@ -948,7 +950,7 @@ JSON Structure:
   "notes": "string (optional thank you note)"
 }
 
-Generate 3-5 line items with realistic pricing for a ${company.employeeCount} employee company purchasing ${spendingCategory} related items/services.`;
+Generate exactly ${lineItemCount || 4} line items with realistic pricing for a ${company.employeeCount} employee company purchasing ${spendingCategory} related items/services.`;
 
     case 'receipt':
       return `${baseInfo}
@@ -1116,7 +1118,7 @@ JSON Structure:
   "notes": "string (scope notes or next steps)"
 }
 
-Generate 3-5 line items representing a ${spendingCategory} project or service engagement. Price appropriately for a ${company.employeeCount} employee ${company.industry} company.`;
+Generate exactly ${lineItemCount || 4} line items representing a ${spendingCategory} project or service engagement. Price appropriately for a ${company.employeeCount} employee ${company.industry} company.`;
 
     case 'contract':
       return `${baseInfo}
@@ -1169,7 +1171,7 @@ JSON Structure:
   }
 }
 
-Generate 4-6 specific ${spendingCategory} services and 5-7 standard contract terms. Set contract value appropriate for a ${company.employeeCount} employee company's ${spendingCategory} needs.`;
+Generate exactly ${lineItemCount || 5} specific ${spendingCategory} services and 5-7 standard contract terms. Set contract value appropriate for a ${company.employeeCount} employee company's ${spendingCategory} needs.`;
 
     case 'hotel_folio':
       const checkInDate = new Date(today);
@@ -1361,7 +1363,8 @@ function buildConnectedPrompt(
   spendingCategory: string,
   relatedAssets: RelatedAssetContext,
   invoiceConfig?: InvoiceConfig,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  lineItemCount?: number
 ): string {
   // Calculate actual dates for realistic document generation
   const today = new Date();
@@ -1576,7 +1579,7 @@ JSON Structure:
   "notes": "string (${invoiceConfig ? `mention this is invoice ${invoiceConfig.invoiceNumber} of ${invoiceConfig.totalInvoices} and reference the quote/contract` : 'reference the quote/contract in the note'})"
 }
 
-Generate 2-4 line items that represent billable work from the quoted/contracted services.`;
+Generate exactly ${lineItemCount || 3} line items that represent billable work from the quoted/contracted services.`;
   }
 
   // Fall back to regular prompt if no connected context applies

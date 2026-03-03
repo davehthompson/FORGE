@@ -40,6 +40,10 @@ interface AppState {
   invoiceCount: number;
   setInvoiceCount: (count: number) => void;
 
+  // Line item count per document
+  lineItemCount: number;
+  setLineItemCount: (count: number) => void;
+
   // Generated assets (single assets)
   generatedAssets: Record<AssetType, AssetData | null>;
   setGeneratedAsset: (type: AssetType, data: AssetData) => void;
@@ -86,6 +90,7 @@ const initialState = {
   quickReceiptType: 'receipt' as 'receipt' | 'paper_receipt',
   selectedAssets: [] as AssetType[],
   invoiceCount: 2,
+  lineItemCount: 4,
   generatedAssets: {
     invoice: null,
     receipt: null,
@@ -133,6 +138,8 @@ export const useStore = create<AppState>((set) => ({
   clearAssets: () => set({ selectedAssets: [] }),
 
   setInvoiceCount: (count) => set({ invoiceCount: count }),
+
+  setLineItemCount: (count) => set({ lineItemCount: count }),
 
   setGeneratedAsset: (type, data) =>
     set((state) => ({

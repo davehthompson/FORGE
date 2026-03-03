@@ -68,6 +68,8 @@ export function AssetSelector() {
     setError,
     invoiceCount,
     setInvoiceCount,
+    lineItemCount,
+    setLineItemCount,
     setGeneratedInvoices,
     setCurrentInvoiceIndex
   } = useStore();
@@ -123,7 +125,8 @@ export function AssetSelector() {
             }
           },
           invoiceCount,
-          selectedCurrency
+          selectedCurrency,
+          lineItemCount
         );
         
         // Store single assets (quote, contract, receipt)
@@ -161,7 +164,8 @@ export function AssetSelector() {
             }
           },
           1, // Single invoice if needed
-          selectedCurrency
+          selectedCurrency,
+          lineItemCount
         );
         
         Object.entries(result.assets).forEach(([type, data]) => {
@@ -183,7 +187,8 @@ export function AssetSelector() {
               setCurrentStatus(status);
             },
             undefined,
-            selectedCurrency
+            selectedCurrency,
+            lineItemCount
           );
           
           setGeneratedAsset(type, assetData);
@@ -344,6 +349,37 @@ export function AssetSelector() {
               );
             })}
           </div>
+
+          {/* Line Item Count */}
+          {selectedAssets.some(a => ['invoice', 'quote', 'contract'].includes(a)) && (
+            <div className="mb-6 p-4 bg-ramp-sand/50 rounded-lg border border-ramp-stone">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-ramp-slate">Line Items per Document</p>
+                  <p className="text-xs text-ramp-sage">
+                    Number of line items to generate for each asset
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setLineItemCount(Math.max(1, lineItemCount - 1))}
+                    disabled={lineItemCount <= 1}
+                    className="w-8 h-8 rounded-lg border border-ramp-stone flex items-center justify-center hover:bg-ramp-sand disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Minus className="w-4 h-4 text-ramp-slate" />
+                  </button>
+                  <span className="w-8 text-center font-bold text-ramp-slate">{lineItemCount}</span>
+                  <button
+                    onClick={() => setLineItemCount(Math.min(10, lineItemCount + 1))}
+                    disabled={lineItemCount >= 10}
+                    className="w-8 h-8 rounded-lg border border-ramp-stone flex items-center justify-center hover:bg-ramp-sand disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Plus className="w-4 h-4 text-ramp-slate" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Connected Flow Indicator */}
           {isConnectedFlow && (

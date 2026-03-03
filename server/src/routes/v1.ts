@@ -58,7 +58,7 @@ function collectErrors(errors: (string | null)[]): string[] {
 
 v1Router.post('/generate', async (req: Request, res: Response) => {
   try {
-    const { type, domain, spendingCategory, currency = 'USD', format = 'pdf' } = req.body;
+    const { type, domain, spendingCategory, currency = 'USD', format = 'pdf', lineItemCount } = req.body;
 
     const errors = collectErrors([
       validateEnum(type, GENERATE_TYPES, 'type'),
@@ -75,6 +75,12 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
     if (!spendingCategory || typeof spendingCategory !== 'string') {
       errors.push('"spendingCategory" is required and must be a string');
     }
+    if (lineItemCount !== undefined) {
+      const n = Number(lineItemCount);
+      if (!Number.isInteger(n) || n < 1 || n > 10) {
+        errors.push('"lineItemCount" must be an integer between 1 and 10');
+      }
+    }
     // Remove the __any__ false-positives
     const realErrors = errors.filter(e => !e.includes('__any__'));
 
@@ -83,7 +89,7 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
     }
 
     const company = await enrichCompanyFromDomain(domain);
-    const data = await generateAssetContent(type as AssetType, company, spendingCategory, currency);
+    const data = await generateAssetContent(type as AssetType, company, spendingCategory, currency, lineItemCount);
     const ext = format === 'jpg' ? 'jpg' : 'pdf';
     const { buffer, contentType } = await renderAsset(type as AssetType, data, ext, currency);
     const filename = buildFilename(type as AssetType, data, ext);
@@ -123,6 +129,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
       invoiceCount = 2,
       currency = 'USD',
       format = 'pdf',
+      lineItemCount,
     } = req.body;
 
     // --- validation ---
@@ -155,6 +162,12 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
     if (currErr) errors.push(currErr);
     const fmtErr = validateEnumOptional(format, EXPORT_FORMATS, 'format');
     if (fmtErr) errors.push(fmtErr);
+    if (lineItemCount !== undefined) {
+      const n = Number(lineItemCount);
+      if (!Number.isInteger(n) || n < 1 || n > 10) {
+        errors.push('"lineItemCount" must be an integer between 1 and 10');
+      }
+    }
 
     if (errors.length > 0) {
       return res.status(400).json({ success: false, error: errors.join('; ') });
@@ -174,7 +187,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
 
     // 1. Quote
     if (wantQuote) {
-      const data = await generateAssetContent('quote', company, spendingCategory, currency);
+      const data = await generateAssetContent('quote', company, spendingCategory, currency, lineItemCount);
       quoteData = data as QuoteData;
       const { buffer } = await renderAsset('quote', data, ext, currency);
       files.push({ name: buildFilename('quote', data, ext), buffer });
@@ -201,6 +214,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         relatedAssets,
         undefined,
         currency,
+        lineItemCount,
       );
       contractData = data as ContractData;
       const { buffer } = await renderAsset('contract', data, ext, currency);
@@ -254,6 +268,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         relatedAssets,
         invoiceConfig,
         currency,
+        lineItemCount,
       );
 
       const { buffer } = await renderAsset('invoice', data, ext, currency);

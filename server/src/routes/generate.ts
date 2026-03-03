@@ -13,12 +13,13 @@ interface GenerateRequest {
   relatedAssets?: RelatedAssetContext;
   invoiceConfig?: InvoiceConfig;
   currency?: string;
+  lineItemCount?: number;
 }
 
 // Standard non-streaming endpoint
 generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
-    const { type, company, spendingCategory, currency = 'USD' } = req.body;
+    const { type, company, spendingCategory, currency = 'USD', lineItemCount } = req.body;
     
     if (!type) {
       return res.status(400).json({
@@ -56,7 +57,7 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
       return res.json({ success: true, data: mockData });
     }
     
-    const assetData = await generateAssetContent(type, company, spendingCategory, currency);
+    const assetData = await generateAssetContent(type, company, spendingCategory, currency, lineItemCount);
     
     trackGeneration({
       assetType: type,
@@ -83,7 +84,7 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
 // Streaming SSE endpoint
 generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
-    const { type, company, spendingCategory, relatedAssets, invoiceConfig, currency = 'USD' } = req.body;
+    const { type, company, spendingCategory, relatedAssets, invoiceConfig, currency = 'USD', lineItemCount } = req.body;
     
     // Validate inputs
     if (!type) {
@@ -151,7 +152,8 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       },
       relatedAssets,
       invoiceConfig,
-      currency
+      currency,
+      lineItemCount
     );
 
     // Send the final complete data
