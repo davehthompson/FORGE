@@ -31,6 +31,43 @@ function rgbToHex(r: number, g: number, b: number): string {
 }
 
 /**
+ * Convert RGB [0-255] to HSL. Returns [h 0-360, s 0-1, l 0-1].
+ */
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return [h * 360, s, l];
+}
+
+/**
+ * Pick the most vibrant (highest saturation) color from a palette,
+ * filtering out near-white, near-black, and gray tones.
+ */
+function pickMostVibrant(palette: [number, number, number][]): [number, number, number] | null {
+  let best: [number, number, number] | null = null;
+  let bestSaturation = -1;
+
+  for (const [r, g, b] of palette) {
+    const [, s, l] = rgbToHsl(r, g, b);
+    if (l > 0.85 || l < 0.08 || s < 0.15) continue;
+    if (s > bestSaturation) {
+      bestSaturation = s;
+      best = [r, g, b];
+    }
+  }
+
+  return best;
+}
+
+/**
  * Extract dominant color from an image URL
  */
 async function extractDominantColor(imageUrl: string): Promise<LogoColors | null> {
@@ -45,7 +82,8 @@ async function extractDominantColor(imageUrl: string): Promise<LogoColors | null
     
     img.onload = () => {
       try {
-        const rgb = colorThief.getColor(img) as [number, number, number];
+        const palette = colorThief.getPalette(img, 8) as [number, number, number][];
+        const rgb = pickMostVibrant(palette) || (colorThief.getColor(img) as [number, number, number]);
         const [r, g, b] = rgb;
         const luminance = getLuminance(r, g, b);
         
