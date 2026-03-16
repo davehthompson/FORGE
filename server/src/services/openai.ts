@@ -36,6 +36,52 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+const VENDOR_EXAMPLES: Record<string, string[]> = {
+  'office supplies|office equipment': ['Staples', 'Office Depot', 'W.B. Mason', 'Uline'],
+  'technology|hardware|IT equipment|computers': ['Dell', 'CDW', 'Insight Enterprises', 'SHI International', 'Lenovo', 'HP Inc.'],
+  'software|SaaS|subscriptions': ['Microsoft', 'Salesforce', 'Adobe', 'Atlassian', 'ServiceNow', 'Oracle'],
+  'equipment purchase|equipment maintenance|machinery|industrial equipment': ['Grainger', 'Fastenal', 'MSC Industrial Direct', 'Applied Industrial Technologies', 'Motion Industries', 'Trane Technologies'],
+  'utilities|facilities management|building services': ['ABM Industries', 'CBRE', 'JLL (Jones Lang LaSalle)', 'Cushman & Wakefield', 'Cintas', 'Ecolab', 'Waste Management'],
+  'logistics|shipping|freight|supply chain|process and logistics': ['FedEx', 'UPS', 'DHL Supply Chain', 'XPO Logistics', 'C.H. Robinson', 'Kuehne+Nagel', 'Maersk'],
+  'manufacturing|production|raw materials': ['3M', 'Honeywell', 'Emerson Electric', 'Parker Hannifin', 'Illinois Tool Works', 'Dow Inc.'],
+  'marketing|advertising|media': ['WPP', 'Omnicom Group', 'Publicis Groupe', 'HubSpot', 'Hootsuite', 'Sprinklr'],
+  'legal|compliance': ['Baker McKenzie', 'DLA Piper', 'Latham & Watkins', 'Skadden Arps', 'Kirkland & Ellis'],
+  'consulting|advisory|professional services|audit': ['Deloitte', 'KPMG', 'Accenture', 'McKinsey', 'Booz Allen Hamilton', 'PwC'],
+  'travel|entertainment': ['Marriott', 'Hilton', 'United Airlines', 'Enterprise Rent-A-Car', 'Concur (SAP)'],
+  'recruiting|staffing|HR|human resources': ['Robert Half', 'Kforce', 'Randstad', 'ADP', 'Insperity', 'Paychex'],
+  'security|cybersecurity': ['Securitas', 'Allied Universal', 'CrowdStrike', 'Palo Alto Networks', 'Fortinet', 'Garda World'],
+  'telecom|communications|internet': ['AT&T Business', 'Verizon Business', 'Comcast Business', 'Lumen Technologies', 'T-Mobile Business'],
+  'cloud|hosting|infrastructure': ['Amazon Web Services (AWS)', 'Microsoft Azure', 'Google Cloud', 'Rackspace', 'DigitalOcean'],
+  'construction|building|renovation': ['Turner Construction', 'Bechtel', 'Skanska', 'AECOM', 'Jacobs Engineering'],
+  'printing|signage|promotional': ['Vistaprint', 'FedEx Office', 'Minuteman Press', '4imprint', 'Cimpress'],
+  'food|catering|cafeteria|dining': ['Aramark', 'Sodexo', 'Compass Group', 'ezCater', 'US Foods'],
+  'insurance|risk': ['Marsh McLennan', 'Aon', 'Willis Towers Watson', 'The Hartford', 'Zurich Insurance'],
+  'medical|healthcare|lab supplies': ['McKesson', 'Henry Schein', 'Cardinal Health', 'Medline Industries', 'Stryker'],
+  'automotive|fleet|vehicles': ['Enterprise Fleet Management', 'LeasePlan', 'Penske', 'Ryder', 'Element Fleet'],
+  'janitorial|cleaning|sanitation': ['Cintas', 'ServiceMaster', 'ABM Industries', 'Kärcher', 'Ecolab'],
+  'research|laboratory|scientific': ['Thermo Fisher Scientific', 'Agilent Technologies', 'MilliporeSigma', 'Bio-Rad Laboratories'],
+  'training|education|professional development': ['Coursera for Business', 'LinkedIn Learning', 'Udemy Business', 'Skillsoft', 'Dale Carnegie'],
+  'energy|power|fuel': ['Enel', 'Duke Energy', 'Shell Commercial', 'BP Business', 'Schneider Electric'],
+};
+
+function getVendorExamples(spendingCategory: string): string {
+  const category = spendingCategory.toLowerCase();
+  const matched: string[] = [];
+
+  for (const [pattern, vendors] of Object.entries(VENDOR_EXAMPLES)) {
+    const keywords = pattern.split('|');
+    if (keywords.some(kw => category.includes(kw))) {
+      matched.push(...vendors);
+    }
+  }
+
+  const unique = [...new Set(matched)];
+  if (unique.length > 0) {
+    return `Suggested real vendors for "${spendingCategory}": ${unique.join(', ')}`;
+  }
+  return `Find real, well-known vendors that specialize in "${spendingCategory}". Do NOT default to consulting firms.`;
+}
+
 // Recalculate subtotals and totals from line items so exported numbers always reconcile
 function recalculateTotals(type: AssetType, data: AssetData): AssetData {
   switch (type) {
@@ -227,16 +273,13 @@ CURRENCY: All monetary values MUST be in ${currency} (${currencyInfo.name}, symb
 CRITICAL REQUIREMENTS:
 1. All vendors MUST be REAL companies that actually exist - do NOT invent fictional company names
 2. Prioritize vendors that operate in or near: ${company.location}
-3. Use well-known national brands OR real regional businesses in the "${spendingCategory}" space
+3. Use well-known national brands OR real regional businesses that specialize in "${spendingCategory}"
 4. Include real addresses (use the vendor's actual headquarters or a real location near the client)
 5. All line items, products, and services MUST be directly related to: "${spendingCategory}"
 
-Examples of REAL vendors by category:
-- Office Supplies: Staples, Office Depot, W.B. Mason
-- Technology/Hardware: Dell, CDW, Insight Enterprises, Best Buy Business
-- Software: Microsoft, Salesforce, Adobe, Atlassian
-- Travel: Marriott, Hilton, United Airlines, Enterprise Rent-A-Car
-- Professional Services: Deloitte, KPMG, Accenture (or real regional firms)
+${getVendorExamples(spendingCategory)}
+
+IMPORTANT: Do NOT use consulting firms (Deloitte, PwC, EY, KPMG, Accenture, McKinsey, BCG) as vendors UNLESS the spending category explicitly involves consulting, advisory, audit, or professional services. For categories like equipment, logistics, utilities, facilities, manufacturing, etc., use vendors that specialize in that specific industry.
 
 The data should have realistic prices and quantities appropriate for the company's size and industry.`;
 
@@ -332,16 +375,13 @@ CURRENCY: All monetary values MUST be in ${currency} (${currencyInfo.name}, symb
 CRITICAL REQUIREMENTS:
 1. All vendors MUST be REAL companies that actually exist - do NOT invent fictional company names
 2. Prioritize vendors that operate in or near: ${company.location}
-3. Use well-known national brands OR real regional businesses in the "${spendingCategory}" space
+3. Use well-known national brands OR real regional businesses that specialize in "${spendingCategory}"
 4. Include real addresses (use the vendor's actual headquarters or a real location near the client)
 5. All line items, products, and services MUST be directly related to: "${spendingCategory}"
 
-Examples of REAL vendors by category:
-- Office Supplies: Staples, Office Depot, W.B. Mason
-- Technology/Hardware: Dell, CDW, Insight Enterprises, Best Buy Business
-- Software: Microsoft, Salesforce, Adobe, Atlassian
-- Travel: Marriott, Hilton, United Airlines, Enterprise Rent-A-Car
-- Professional Services: Deloitte, KPMG, Accenture (or real regional firms)
+${getVendorExamples(spendingCategory)}
+
+IMPORTANT: Do NOT use consulting firms (Deloitte, PwC, EY, KPMG, Accenture, McKinsey, BCG) as vendors UNLESS the spending category explicitly involves consulting, advisory, audit, or professional services. For categories like equipment, logistics, utilities, facilities, manufacturing, etc., use vendors that specialize in that specific industry.
 
 The data should have realistic prices and quantities appropriate for the company's size and industry.
 
@@ -907,7 +947,8 @@ CLIENT COMPANY CONTEXT:
 VENDOR INSTRUCTIONS:
 - Use a REAL company that provides ${spendingCategory} products/services
 - The vendor should operate in or near ${company.location} (use their real address near this location, or headquarters)
-- Examples: For tech hardware use Dell, CDW, Insight; for office supplies use Staples, Office Depot; etc.
+- ${getVendorExamples(spendingCategory)}
+- Do NOT use consulting firms unless the category is specifically consulting or advisory
 
 LINE ITEM REQUIREMENTS:
 - Each line item description MUST be highly specific and detailed - NO generic descriptions
@@ -1080,9 +1121,10 @@ CLIENT COMPANY CONTEXT:
 - Use this context to propose services this company would actually need
 
 VENDOR INSTRUCTIONS:
-- Use a REAL professional services company that provides ${spendingCategory} services
+- Use a REAL company that provides ${spendingCategory} products or services
 - The vendor should serve the ${company.location} area (use their real office address or headquarters)
-- Examples: For IT services use Accenture, Deloitte, IBM; for marketing use WPP agencies, Publicis; for legal use real law firms; etc.
+- ${getVendorExamples(spendingCategory)}
+- Do NOT use consulting firms unless the category is specifically consulting or advisory
 
 LINE ITEM REQUIREMENTS:
 - Each line item description MUST be highly specific and detailed - NO generic descriptions
@@ -1131,9 +1173,10 @@ CLIENT COMPANY CONTEXT:
 - Use this context to propose services this company would actually need
 
 VENDOR INSTRUCTIONS:
-- Use a REAL service provider company that offers ${spendingCategory} services
+- Use a REAL service provider company that offers ${spendingCategory} products or services
 - The provider should have operations in or serving ${company.location} (use their real office address)
-- Examples: For cloud services use AWS, Microsoft Azure, Google Cloud; for HR use ADP, Paychex; for facilities use ABM, CBRE; etc.
+- ${getVendorExamples(spendingCategory)}
+- Do NOT use consulting firms unless the category is specifically consulting or advisory
 
 SERVICE REQUIREMENTS:
 - Each service listed MUST be highly specific and detailed - NO generic descriptions
