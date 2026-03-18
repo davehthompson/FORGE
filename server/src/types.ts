@@ -13,6 +13,13 @@ export interface CompanyProfile {
 // Asset types
 export type AssetType = 'invoice' | 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt' | 'quote' | 'contract';
 
+// Shared tax line used across invoices, receipts, and paper receipts
+export interface TaxLine {
+  name: string;
+  rate: number;
+  amount: number;
+}
+
 // Generated asset content
 export interface InvoiceData {
   invoiceNumber: string;
@@ -39,6 +46,8 @@ export interface InvoiceData {
   }[];
   subtotal: number;
   tax: number;
+  taxes?: TaxLine[];
+  taxTotal?: number;
   total: number;
   paymentTerms: string;
   remitTo?: {
@@ -68,7 +77,9 @@ export interface ReceiptData {
   }[];
   subtotal: number;
   tax: number;
-  tip?: number;  // Optional tip for restaurant/meal receipts
+  taxes?: TaxLine[];
+  taxTotal?: number;
+  tip?: number;
   total: number;
   paymentMethod: string;
   cardLast4?: string;
@@ -103,7 +114,9 @@ export interface PaperReceiptData {
   subtotal: number;
   taxRate: number;
   taxAmount: number;
-  tip?: number;  // Optional tip for restaurant receipts
+  taxes?: TaxLine[];
+  taxTotal?: number;
+  tip?: number;
   total: number;
   payment: {
     method: 'cash' | 'credit' | 'debit' | 'gift_card' | 'mobile';

@@ -154,13 +154,24 @@ export function InvoiceTemplate({ data, scale = 1, currency = 'USD' }: InvoiceTe
             <span className="text-ramp-gray-600">Subtotal</span>
             <span className="text-ramp-slate">{formatCurrency(data.subtotal)}</span>
           </div>
-          <div 
-            className="flex justify-between py-2"
-            style={{ borderBottom: `1px solid ${accentBorderColor}` }}
-          >
-            <span className="text-ramp-gray-600">Tax</span>
-            <span className="text-ramp-slate">{formatCurrency(data.tax)}</span>
-          </div>
+          {data.taxes?.length ? data.taxes.map((t, i) => (
+            <div 
+              key={i}
+              className="flex justify-between py-2"
+              style={{ borderBottom: `1px solid ${accentBorderColor}` }}
+            >
+              <span className="text-ramp-gray-600">{t.name}{t.rate ? ` (${(t.rate * 100).toFixed(1)}%)` : ''}</span>
+              <span className="text-ramp-slate">{formatCurrency(t.amount)}</span>
+            </div>
+          )) : (
+            <div 
+              className="flex justify-between py-2"
+              style={{ borderBottom: `1px solid ${accentBorderColor}` }}
+            >
+              <span className="text-ramp-gray-600">Tax</span>
+              <span className="text-ramp-slate">{formatCurrency(data.tax)}</span>
+            </div>
+          )}
           <div 
             className="flex justify-between py-3 mt-2"
             style={{ borderTop: `2px solid ${accentColor}` }}

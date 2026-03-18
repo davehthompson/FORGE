@@ -157,10 +157,17 @@ export function PaperReceiptTemplate({ data, scale = 1, currency = 'USD' }: Pape
           <span>SUBTOTAL:</span>
           <span>{formatPrice(data.subtotal)}</span>
         </div>
-        <div className="flex justify-between">
-          <span>TAX ({(data.taxRate * 100).toFixed(2)}%):</span>
-          <span>{formatPrice(data.taxAmount)}</span>
-        </div>
+        {data.taxes?.length ? data.taxes.map((t, i) => (
+          <div key={i} className="flex justify-between">
+            <span>{t.name.toUpperCase()} ({(t.rate * 100).toFixed(2)}%):</span>
+            <span>{formatPrice(t.amount)}</span>
+          </div>
+        )) : (
+          <div className="flex justify-between">
+            <span>TAX ({(data.taxRate * 100).toFixed(2)}%):</span>
+            <span>{formatPrice(data.taxAmount)}</span>
+          </div>
+        )}
         {data.tip !== undefined && data.tip > 0 && (
           <div className="flex justify-between">
             <span>TIP:</span>

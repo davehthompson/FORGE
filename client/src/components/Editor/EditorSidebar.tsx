@@ -50,10 +50,12 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
     onChange({ ...data, client: { ...data.client, [field]: value } });
   };
 
-  const recalcInvoice = (items: InvoiceData['lineItems']) => {
+  const recalcInvoice = (items: InvoiceData['lineItems'], taxes?: InvoiceData['taxes']) => {
     const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
-    const tax = Math.round(subtotal * 0.0875 * 100) / 100;
-    return { subtotal, tax, total: Math.round((subtotal + tax) * 100) / 100 };
+    const taxLines = taxes?.length ? taxes : data.taxes?.length ? data.taxes : [{ name: 'Tax', rate: 0.0875, amount: 0 }];
+    const updatedTaxes = taxLines.map(t => ({ ...t, amount: Math.round(subtotal * t.rate * 100) / 100 }));
+    const taxTotal = Math.round(updatedTaxes.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
+    return { subtotal, taxes: updatedTaxes, taxTotal, tax: taxTotal, total: Math.round((subtotal + taxTotal) * 100) / 100 };
   };
 
   const updateLineItem = (index: number, field: keyof InvoiceData['lineItems'][0], value: string | number) => {
@@ -172,6 +174,64 @@ function InvoiceEditor({ data, onChange }: { data: InvoiceData; onChange: (data:
         ))}
       </Section>
 
+      <Section title="Taxes" action={
+        <button
+          onClick={() => {
+            const newTaxes = [...(data.taxes || []), { name: 'Tax', rate: 0, amount: 0 }];
+            onChange({ ...data, ...recalcInvoice(data.lineItems, newTaxes) });
+          }}
+          className="flex items-center gap-1 text-xs font-medium text-ramp-sage hover:text-ramp-slate transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Add Tax
+        </button>
+      }>
+        {(data.taxes || []).map((taxLine, index) => (
+          <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <Input
+                label="Tax Name"
+                value={taxLine.name}
+                onChange={(e) => {
+                  const newTaxes = [...(data.taxes || [])];
+                  newTaxes[index] = { ...newTaxes[index], name: e.target.value };
+                  onChange({ ...data, ...recalcInvoice(data.lineItems, newTaxes) });
+                }}
+              />
+              {(data.taxes || []).length > 1 && (
+                <button
+                  onClick={() => {
+                    const newTaxes = (data.taxes || []).filter((_, i) => i !== index);
+                    onChange({ ...data, ...recalcInvoice(data.lineItems, newTaxes) });
+                  }}
+                  className="mt-6 p-1 text-ramp-gray-500 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="Rate (%)"
+                type="number"
+                step="0.01"
+                value={numVal(Math.round(taxLine.rate * 10000) / 100)}
+                onChange={(e) => {
+                  const newTaxes = [...(data.taxes || [])];
+                  newTaxes[index] = { ...newTaxes[index], rate: (parseFloat(e.target.value) || 0) / 100 };
+                  onChange({ ...data, ...recalcInvoice(data.lineItems, newTaxes) });
+                }}
+              />
+              <Input
+                label={`Amount (${sym})`}
+                type="number"
+                value={numVal(taxLine.amount)}
+                disabled
+              />
+            </div>
+          </div>
+        ))}
+      </Section>
+
       <Section title="Notes">
         <Input
           label="Payment Terms"
@@ -195,11 +255,13 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
     onChange({ ...data, vendor: { ...data.vendor, [field]: value } });
   };
 
-  const recalcReceipt = (items: ReceiptData['items']) => {
+  const recalcReceipt = (items: ReceiptData['items'], taxes?: ReceiptData['taxes']) => {
     const subtotal = Math.round(items.reduce((sum, item) => sum + (item.quantity * item.price), 0) * 100) / 100;
-    const tax = Math.round(subtotal * 0.0875 * 100) / 100;
+    const taxLines = taxes?.length ? taxes : data.taxes?.length ? data.taxes : [{ name: 'Tax', rate: 0.0875, amount: 0 }];
+    const updatedTaxes = taxLines.map(t => ({ ...t, amount: Math.round(subtotal * t.rate * 100) / 100 }));
+    const taxTotal = Math.round(updatedTaxes.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
     const tip = data.tip || 0;
-    return { subtotal, tax, total: Math.round((subtotal + tax + tip) * 100) / 100 };
+    return { subtotal, taxes: updatedTaxes, taxTotal, tax: taxTotal, total: Math.round((subtotal + taxTotal + tip) * 100) / 100 };
   };
 
   const updateItem = (index: number, field: keyof ReceiptData['items'][0], value: string | number) => {
@@ -220,7 +282,8 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
   };
 
   const updateTip = (tipValue: number) => {
-    const total = Math.round((data.subtotal + data.tax + tipValue) * 100) / 100;
+    const taxTotal = data.taxTotal ?? data.tax ?? 0;
+    const total = Math.round((data.subtotal + taxTotal + tipValue) * 100) / 100;
     onChange({ ...data, tip: tipValue, total });
   };
 
@@ -279,6 +342,64 @@ function ReceiptEditor({ data, onChange }: { data: ReceiptData; onChange: (data:
                 step="0.01"
                 value={numVal(item.price)}
                 onChange={(e) => updateItem(index, 'price', parseFloat(e.target.value) || 0)}
+              />
+            </div>
+          </div>
+        ))}
+      </Section>
+
+      <Section title="Taxes" action={
+        <button
+          onClick={() => {
+            const newTaxes = [...(data.taxes || []), { name: 'Tax', rate: 0, amount: 0 }];
+            onChange({ ...data, ...recalcReceipt(data.items, newTaxes) });
+          }}
+          className="flex items-center gap-1 text-xs font-medium text-ramp-sage hover:text-ramp-slate transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Add Tax
+        </button>
+      }>
+        {(data.taxes || []).map((taxLine, index) => (
+          <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <Input
+                label="Tax Name"
+                value={taxLine.name}
+                onChange={(e) => {
+                  const newTaxes = [...(data.taxes || [])];
+                  newTaxes[index] = { ...newTaxes[index], name: e.target.value };
+                  onChange({ ...data, ...recalcReceipt(data.items, newTaxes) });
+                }}
+              />
+              {(data.taxes || []).length > 1 && (
+                <button
+                  onClick={() => {
+                    const newTaxes = (data.taxes || []).filter((_, i) => i !== index);
+                    onChange({ ...data, ...recalcReceipt(data.items, newTaxes) });
+                  }}
+                  className="mt-6 p-1 text-ramp-gray-500 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="Rate (%)"
+                type="number"
+                step="0.01"
+                value={numVal(Math.round(taxLine.rate * 10000) / 100)}
+                onChange={(e) => {
+                  const newTaxes = [...(data.taxes || [])];
+                  newTaxes[index] = { ...newTaxes[index], rate: (parseFloat(e.target.value) || 0) / 100 };
+                  onChange({ ...data, ...recalcReceipt(data.items, newTaxes) });
+                }}
+              />
+              <Input
+                label={`Amount (${sym})`}
+                type="number"
+                value={numVal(taxLine.amount)}
+                disabled
               />
             </div>
           </div>
@@ -619,11 +740,13 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
     onChange({ ...data, store: { ...data.store, [field]: value } });
   };
 
-  const recalcPaperReceipt = (items: PaperReceiptData['items']) => {
+  const recalcPaperReceipt = (items: PaperReceiptData['items'], taxes?: PaperReceiptData['taxes']) => {
     const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
-    const taxAmount = Math.round(subtotal * data.taxRate * 100) / 100;
+    const taxLines = taxes?.length ? taxes : data.taxes?.length ? data.taxes : [{ name: 'Tax', rate: data.taxRate || 0.0825, amount: 0 }];
+    const updatedTaxes = taxLines.map(t => ({ ...t, amount: Math.round(subtotal * t.rate * 100) / 100 }));
+    const taxTotal = Math.round(updatedTaxes.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
     const tip = data.tip ? Math.round(data.tip * 100) / 100 : 0;
-    return { subtotal, taxAmount, total: Math.round((subtotal + taxAmount + tip) * 100) / 100 };
+    return { subtotal, taxes: updatedTaxes, taxTotal, taxAmount: taxTotal, taxRate: updatedTaxes[0]?.rate || 0, total: Math.round((subtotal + taxTotal + tip) * 100) / 100 };
   };
 
   const updateItem = (index: number, field: keyof PaperReceiptData['items'][0], value: string | number) => {
@@ -735,6 +858,64 @@ function PaperReceiptEditor({ data, onChange }: { data: PaperReceiptData; onChan
                 step="0.01"
                 value={numVal(item.unitPrice)}
                 onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
+              />
+            </div>
+          </div>
+        ))}
+      </Section>
+
+      <Section title="Taxes" action={
+        <button
+          onClick={() => {
+            const newTaxes = [...(data.taxes || []), { name: 'Tax', rate: 0, amount: 0 }];
+            onChange({ ...data, ...recalcPaperReceipt(data.items, newTaxes) });
+          }}
+          className="flex items-center gap-1 text-xs font-medium text-ramp-sage hover:text-ramp-slate transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Add Tax
+        </button>
+      }>
+        {(data.taxes || []).map((taxLine, index) => (
+          <div key={index} className="p-3 bg-ramp-sand rounded-lg space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <Input
+                label="Tax Name"
+                value={taxLine.name}
+                onChange={(e) => {
+                  const newTaxes = [...(data.taxes || [])];
+                  newTaxes[index] = { ...newTaxes[index], name: e.target.value };
+                  onChange({ ...data, ...recalcPaperReceipt(data.items, newTaxes) });
+                }}
+              />
+              {(data.taxes || []).length > 1 && (
+                <button
+                  onClick={() => {
+                    const newTaxes = (data.taxes || []).filter((_, i) => i !== index);
+                    onChange({ ...data, ...recalcPaperReceipt(data.items, newTaxes) });
+                  }}
+                  className="mt-6 p-1 text-ramp-gray-500 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="Rate (%)"
+                type="number"
+                step="0.01"
+                value={numVal(Math.round(taxLine.rate * 10000) / 100)}
+                onChange={(e) => {
+                  const newTaxes = [...(data.taxes || [])];
+                  newTaxes[index] = { ...newTaxes[index], rate: (parseFloat(e.target.value) || 0) / 100 };
+                  onChange({ ...data, ...recalcPaperReceipt(data.items, newTaxes) });
+                }}
+              />
+              <Input
+                label={`Amount (${sym})`}
+                type="number"
+                value={numVal(taxLine.amount)}
+                disabled
               />
             </div>
           </div>

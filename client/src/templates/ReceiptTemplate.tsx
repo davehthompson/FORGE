@@ -104,10 +104,17 @@ export function ReceiptTemplate({ data, scale = 1, currency = 'USD' }: ReceiptTe
           <span className="text-ramp-gray-600">Subtotal</span>
           <span className="text-ramp-slate">{formatCurrency(data.subtotal)}</span>
         </div>
-        <div className="flex justify-between text-sm py-1">
-          <span className="text-ramp-gray-600">Tax</span>
-          <span className="text-ramp-slate">{formatCurrency(data.tax)}</span>
-        </div>
+        {data.taxes?.length ? data.taxes.map((t, i) => (
+          <div key={i} className="flex justify-between text-sm py-1">
+            <span className="text-ramp-gray-600">{t.name}{t.rate ? ` (${(t.rate * 100).toFixed(1)}%)` : ''}</span>
+            <span className="text-ramp-slate">{formatCurrency(t.amount)}</span>
+          </div>
+        )) : (
+          <div className="flex justify-between text-sm py-1">
+            <span className="text-ramp-gray-600">Tax</span>
+            <span className="text-ramp-slate">{formatCurrency(data.tax)}</span>
+          </div>
+        )}
         {data.tip !== undefined && data.tip > 0 && (
           <div className="flex justify-between text-sm py-1">
             <span className="text-ramp-gray-600">Tip</span>

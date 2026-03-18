@@ -591,10 +591,15 @@ function generateInvoiceHtml(data: InvoiceData, styles: string, formatCurrency: 
             <span class="label">Subtotal</span>
             <span class="value">${formatCurrency(data.subtotal)}</span>
           </div>
+          ${data.taxes?.length ? data.taxes.map((t: any) => `
+          <div class="totals-row">
+            <span class="label">${t.name}${t.rate ? ` (${(t.rate * 100).toFixed(1)}%)` : ''}</span>
+            <span class="value">${formatCurrency(t.amount)}</span>
+          </div>`).join('') : `
           <div class="totals-row">
             <span class="label">Tax</span>
             <span class="value">${formatCurrency(data.tax)}</span>
-          </div>
+          </div>`}
           <div class="totals-row total">
             <span class="label">Total Due</span>
             <span class="value">${formatCurrency(data.total)}</span>
@@ -672,10 +677,15 @@ function generateReceiptHtml(data: ReceiptData, styles: string, formatCurrency: 
             <span class="label">Subtotal</span>
             <span class="value">${formatCurrency(data.subtotal)}</span>
           </div>
+          ${data.taxes?.length ? data.taxes.map((t: any) => `
+          <div class="totals-row">
+            <span class="label">${t.name}${t.rate ? ` (${(t.rate * 100).toFixed(1)}%)` : ''}</span>
+            <span class="value">${formatCurrency(t.amount)}</span>
+          </div>`).join('') : `
           <div class="totals-row">
             <span class="label">Tax</span>
             <span class="value">${formatCurrency(data.tax)}</span>
-          </div>
+          </div>`}
           ${data.tip ? `
           <div class="totals-row">
             <span class="label">Tip</span>
@@ -785,7 +795,7 @@ function generatePaperReceiptHtml(data: PaperReceiptData, _styles: string, forma
 
       <div style="margin-bottom:10px">
         <div class="row"><span>SUBTOTAL:</span><span>${formatPrice(data.subtotal)}</span></div>
-        <div class="row"><span>TAX (${(data.taxRate * 100).toFixed(2)}%):</span><span>${formatPrice(data.taxAmount)}</span></div>
+        ${data.taxes?.length ? data.taxes.map((t: any) => `<div class="row"><span>${t.name.toUpperCase()} (${(t.rate * 100).toFixed(2)}%):</span><span>${formatPrice(t.amount)}</span></div>`).join('\n        ') : `<div class="row"><span>TAX (${(data.taxRate * 100).toFixed(2)}%):</span><span>${formatPrice(data.taxAmount)}</span></div>`}
         ${data.tip && data.tip > 0 ? `<div class="row"><span>TIP:</span><span>${formatPrice(data.tip)}</span></div>` : ''}
         ${data.savings && data.savings > 0 ? `<div class="row small"><span>*** YOU SAVED ***</span><span>-${formatPrice(data.savings)}</span></div>` : ''}
         <div class="row total-row"><span>TOTAL:</span><span>${formatCurrency(data.total)}</span></div>

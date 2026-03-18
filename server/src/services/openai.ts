@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import crypto from 'crypto';
-import { CompanyProfile, AssetType, AssetData, RelatedAssetContext, QuoteData, ContractData, InvoiceConfig, InvoiceData, ReceiptData, HotelFolioData, AirlineReceiptData } from '../types.js';
+import { CompanyProfile, AssetType, AssetData, RelatedAssetContext, QuoteData, ContractData, InvoiceConfig, InvoiceData, ReceiptData, PaperReceiptData, HotelFolioData, AirlineReceiptData } from '../types.js';
 
 function ensureLineItemIds(type: AssetType, data: AssetData): AssetData {
   if (type === 'invoice') {
@@ -82,6 +82,179 @@ function getVendorExamples(spendingCategory: string): string {
   return `Find real, well-known vendors that specialize in "${spendingCategory}". Do NOT default to consulting firms.`;
 }
 
+const TAX_CONFIG: Record<string, string> = {
+  USD: `US Sales Tax. Tax name: "Sales Tax". Rate varies by state (typically 4-10% combined state+local). 5 states have no sales tax (AK, DE, MT, NH, OR). Determine state from company location and use the typical combined rate for that state.
+Category-specific rules: Grocery food (unprepared) is exempt in most states. Prepared food and restaurant meals are taxable. Candy and soft drinks are taxable in most states. Prescription medicine is exempt in all states. Clothing is exempt in some states (PA, NJ, MN, NY under $110). Professional services are often exempt but varies by state.`,
+
+  CAD: `Canadian GST/HST/PST. Determine the province from company location and use the correct tax structure:
+- Alberta: GST 5% only (single line: "GST")
+- British Columbia: GST 5% + PST 7% (two separate lines: "GST" and "PST")
+- Manitoba: GST 5% + RST 7% (two separate lines: "GST" and "RST")
+- New Brunswick: HST 15% (single line: "HST")
+- Newfoundland & Labrador: HST 15% (single line: "HST")
+- Northwest Territories / Nunavut / Yukon: GST 5% only (single line: "GST")
+- Nova Scotia: HST 14% (single line: "HST")
+- Ontario: HST 13% (single line: "HST")
+- Prince Edward Island: HST 15% (single line: "HST")
+- Quebec: GST 5% + QST 9.975% (two separate lines: "GST" and "QST")
+- Saskatchewan: GST 5% + PST 6% (two separate lines: "GST" and "PST")
+Category-specific rules: Basic groceries (meat, vegetables, dairy, eggs, bread, canned goods) are zero-rated (0%). Prepared food and hot food are fully taxed. Bakery items (1-5 units) are taxed; 6+ units are zero-rated. Alcohol is fully taxed. Prescription drugs are zero-rated.`,
+
+  GBP: `UK VAT. Tax name: "VAT". Three tiers: 20% standard, 5% reduced, 0% zero-rated.
+Category-specific rules: Most goods and services: 20%. Cold unprepared food: 0%. Hot takeaway food, restaurant meals: 20%. Alcohol, soft drinks, ice cream, confectionery, crisps: 20%. Children's clothing and footwear: 0%. Books, newspapers, magazines: 0%. Prescription medicines: 0%. Domestic fuel and power: 5%. Children's car seats: 5%.
+For most business invoices (services, equipment, supplies), use 20%. Show as a single "VAT" line.`,
+
+  EUR: `EU VAT. The tax name and rates depend on the country. Determine the country from company location.
+- Germany: 19% standard, 7% reduced. Tax name: "MwSt". Food, books, flowers, public transport: 7%. Restaurant/catering: 7%. Most goods/services: 19%.
+- France: 20% standard, 10% reduced, 5.5% reduced, 2.1% super-reduced. Tax name: "TVA". Restaurants/prepared food: 10%. Grocery food, water, books: 5.5%. Medicine, newspapers: 2.1%. Most goods/services: 20%.
+- Italy: 22% standard, 10% reduced, 5%, 4% super-reduced. Tax name: "IVA". Hotels, restaurants, some food: 10%. Basic food, books, newspapers: 4%. Most goods/services: 22%.
+- Spain: 21% standard, 10% reduced, 4% super-reduced. Tax name: "IVA". Food, hotels, restaurants: 10%. Bread, milk, eggs, fruit, vegetables, books, medicine: 4%. Most goods/services: 21%.
+- Netherlands: 21% standard, 9% reduced. Tax name: "BTW". Food, water, medicines, books, hotels, restaurants: 9%. Most goods/services: 21%.
+For other EU countries, use the standard rate (typically 19-25%) and "VAT" as the tax name. Show as a single line with the correct local tax name.`,
+
+  JPY: `Japanese Consumption Tax. Tax name: "Consumption Tax". Two tiers: 10% standard, 8% reduced.
+Category-specific rules: Most goods and services: 10%. Food and non-alcoholic beverages (takeout/grocery purchase): 8%. Restaurant/dine-in meals: 10%. Alcohol: 10%. Newspapers (subscription, 2+ issues/week): 8%.
+Show as a single "Consumption Tax" line at the applicable rate.`,
+
+  AUD: `Australian GST. Tax name: "GST". Rate: 10% standard, 0% GST-free.
+Category-specific rules: Most goods and services: 10%. Basic food (fresh meat, fruit, vegetables, bread, dairy, eggs, canned goods): GST-free (0%). Prepared meals, restaurant food, confectionery, ice cream, snack food: 10%. Health services and PBS-listed medicine: GST-free. Education: GST-free.
+For most business invoices, use 10%. Show as a single "GST" line.`,
+
+  CHF: `Swiss VAT. Tax name: "MwSt" (German-speaking), "TVA" (French-speaking), "IVA" (Italian-speaking). Use "MwSt" by default. Three tiers: 8.1% standard, 3.8% accommodation, 2.6% reduced.
+Category-specific rules: Most goods and services: 8.1%. Food and non-alcoholic beverages (retail/grocery): 2.6%. Restaurant meals and alcohol: 8.1%. Books, newspapers, medicines: 2.6%. Hotel accommodation: 3.8%.
+Show as a single "MwSt" line at the applicable rate.`,
+
+  CNY: `Chinese VAT. Tax name: "VAT". Four tiers: 13%, 9%, 6%, 0%.
+Category-specific rules: Sale of goods, imports, repairs: 13%. Agricultural products, water, gas, transport, postal, basic telecom, construction, media/publications: 9%. Modern services (consulting, IT, finance, insurance, R&D, tech transfer): 6%. Exports: 0%.
+Show as a single "VAT" line at the applicable rate based on what is being sold/provided.`,
+
+  INR: `Indian GST. For intra-state transactions, show TWO separate tax lines: "CGST" and "SGST" (each at half the total GST rate). For inter-state transactions, show a single "IGST" line at the full rate. Determine from vendor and client locations.
+Rate tiers: 0%, 5%, 12%, 18%, 28%.
+Category-specific rules: Fresh food (fruits, vegetables, milk, bread): 0%. Edible oils, tea, sugar, spices, basic clothing: 5%. Processed food, computers, standard machinery: 12%. Most goods, professional services, electronics, IT services: 18%. Luxury goods, automobiles, tobacco: 28%. Aerated drinks: 40%.
+For most business invoices, use 18% (shown as CGST 9% + SGST 9% for intra-state, or IGST 18% for inter-state).`,
+
+  MXN: `Mexican IVA. Tax name: "IVA". Standard rate: 16%. Border zone rate: 8%. Zero-rated basic necessities.
+Category-specific rules: Most goods and services: 16%. Border regions (within 20km of border): 8%. Unprocessed food (meat, dairy, grains, fruits, vegetables): 0%. Medicine: 0% or exempt. Education and healthcare: Exempt.
+For most business invoices, use 16%. Show as a single "IVA" line.`,
+
+  BRL: `Brazilian taxes. For goods: tax name "ICMS" (state tax, typically 17-18% depending on state). For services: tax name "ISS" (municipal tax, 2-5%). Brazil is transitioning to IBS+CBS from 2026.
+Category-specific rules: Basic food basket (cesta basica): reduced ICMS (0-7% depending on state). Medicine: reduced or exempt in some states. Industrial goods: 12-18%. Services: ISS 2-5% instead of ICMS.
+For simplicity, show as a single tax line ("ICMS" for goods or "ISS" for services) at the appropriate rate.`,
+
+  KRW: `South Korean VAT. Tax name: "VAT". Rate: 10% flat. No reduced rates.
+Exempt categories: Financial services, medical services, education, unprocessed food, cultural items. All other goods and services: 10%.
+Show as a single "VAT" line at 10%.`,
+
+  SGD: `Singapore GST. Tax name: "GST". Rate: 9% flat.
+Exempt categories: Financial services, residential property, investment precious metals. Most goods and services: 9%.
+Show as a single "GST" line at 9%.`,
+
+  HKD: `Hong Kong has NO sales tax, VAT, or GST. Do NOT include any tax lines. The taxes array must be empty and taxTotal must be 0. The total equals the subtotal.`,
+
+  SEK: `Swedish Moms. Tax name: "Moms". Three tiers: 25% standard, 6% reduced (food from April 2026), 6% reduced (books/transport).
+Category-specific rules: Most goods and services: 25%. Food and non-alcoholic beverages: 6%. Restaurant meals: 6%. Alcohol in stores: 25%. Books, newspapers, public transport: 6%. Cultural events, sports: 6%.
+Show as a single "Moms" line at the applicable rate. For most business invoices, use 25%.`,
+
+  NOK: `Norwegian MVA (Moms). Tax name: "MVA". Four tiers: 25% standard, 15% food, 12% accommodation/transport, 0% exports.
+Category-specific rules: Most goods and services: 25%. Food and non-alcoholic beverages: 15%. Passenger transport, hotel accommodation, cinema, museums: 12%. Exports: 0%.
+Show as a single "MVA" line at the applicable rate. For most business invoices, use 25%.`,
+
+  DKK: `Danish Moms. Tax name: "Moms". Rate: 25% flat. Denmark has NO reduced rates for food -- one of the few EU countries to tax food at the full standard rate. Books are zero-rated from 2026.
+Category-specific: Nearly everything is taxed at 25%. Financial services, insurance, medical services, education are exempt.
+Show as a single "Moms" line at 25%.`,
+
+  NZD: `New Zealand GST. Tax name: "GST". Rate: 15% flat. Very few exemptions (financial services, residential rent). Almost everything is taxed at 15% including food.
+Show as a single "GST" line at 15%.`,
+
+  ZAR: `South African VAT. Tax name: "VAT". Standard rate: 15%.
+21 zero-rated basic foodstuffs: brown bread, maize meal, samp, dried beans, lentils, tinned pilchards/sardines, milk powder, rice, vegetables, fruit, vegetable oil, milk, cultured milk, eggs, brown wheaten meal, white bread, white flour, cake flour, canned vegetables, dairy liquid blends, edible offal.
+All other goods and services: 15%. Show as a single "VAT" line.`,
+
+  AED: `UAE VAT. Tax name: "VAT". Standard rate: 5%.
+Zero-rated: Exports, international transport, education (government/recognized), healthcare, new residential buildings. Exempt: Financial services, residential rent, bare land.
+Most goods and services: 5%. Show as a single "VAT" line at 5%.`,
+
+  SAR: `Saudi VAT. Tax name: "VAT". Standard rate: 15%.
+Zero-rated: Exports, international transport, qualifying medicines, investment precious metals. Exempt: Healthcare, education, financial services, residential rent, life insurance.
+Most goods and services: 15%. Show as a single "VAT" line at 15%.`,
+
+  ILS: `Israeli VAT. Tax name: "VAT". Standard rate: 18%.
+Zero-rated: Exports, tourism services, fruit and vegetables.
+Most goods and services: 18%. Show as a single "VAT" line at 18%.`,
+
+  PLN: `Polish VAT. Tax name: "VAT". Four tiers: 23% standard, 8% reduced, 5% reduced, 0% basic food.
+Category-specific rules: Most goods and services: 23%. Catering, building materials, medical devices: 8%. Food products (general), baby items, books: 5%. Basic food (meat, fish, dairy, bread, vegetables, fruits): 0%. Alcohol: 23%.
+Show as a single "VAT" line at the applicable rate. For most business invoices, use 23%.`,
+
+  THB: `Thai VAT. Tax name: "VAT". Rate: 7% (temporarily reduced from statutory 10%, extended through September 2026).
+Exempt categories: Basic groceries, education, healthcare, real estate. Most goods and services: 7%.
+Show as a single "VAT" line at 7%.`,
+
+  PHP: `Philippine VAT. Tax name: "VAT". Rate: 12%.
+Exempt categories: Agricultural products in original state (rice, corn, raw sugar, salt), specific prescription medicines, education, medical/hospital services.
+Most goods and services: 12%. Show as a single "VAT" line at 12%.`,
+};
+
+function getTaxGuidance(currency: string): string {
+  const guidance = TAX_CONFIG[currency];
+  if (guidance) {
+    return `TAX RULES FOR ${currency} REGION:\n${guidance}`;
+  }
+  return 'Apply a reasonable local tax rate for the region. Label the tax appropriately (e.g., "VAT", "GST", "Sales Tax").';
+}
+
+const B2B_TAX_RULES = `
+B2B CROSS-BORDER TAX RULES (apply these BEFORE the standard tax rules):
+
+Determine the vendor's country and the client's country. Then apply the correct rule:
+
+SAME COUNTRY:
+- Apply normal domestic tax rules from the TAX RULES section above.
+
+EU TO EU (intra-community supply):
+- Vendor invoices at 0% VAT with note "Reverse Charge - Article 196 EU VAT Directive"
+- Include vendor's VAT registration number (format: CC-XXXXXXXXX)
+- Include client's VAT registration number
+- Buyer self-assesses VAT in their country (not shown on invoice)
+- taxes array: [{ name: "VAT (Reverse Charge)", rate: 0, amount: 0 }]
+
+EU/UK TO NON-EU (export):
+- Zero-rated export. No VAT charged.
+- Note on invoice: "Zero-rated export supply"
+- taxes array: [{ name: "VAT (Export - Zero Rated)", rate: 0, amount: 0 }]
+
+NON-EU TO EU:
+- Seller typically does not charge VAT
+- Buyer may owe import VAT (not shown on seller's invoice)
+- taxes array should be empty or show 0
+
+US DOMESTIC:
+- Normal sales tax based on state/location (nexus rules)
+
+US TO INTERNATIONAL (export):
+- No US sales tax on exports
+- taxes array: [{ name: "Sales Tax (Export Exempt)", rate: 0, amount: 0 }]
+
+CANADA DOMESTIC:
+- Normal GST/HST/PST based on province
+
+CANADA TO INTERNATIONAL (export):
+- Zero-rated for GST/HST purposes
+- taxes array: [{ name: "GST (Export - Zero Rated)", rate: 0, amount: 0 }]
+
+UK TO EU (post-Brexit):
+- Zero-rated export from UK perspective
+- Buyer may owe import VAT in their EU country
+
+GCC COUNTRIES (UAE, Saudi, etc.):
+- VAT applies on domestic B2B supplies
+- Exports are zero-rated
+
+GENERAL RULE:
+- If vendor and client are in different countries, check if an export exemption applies
+- Always show the tax treatment clearly on the invoice with appropriate notes
+`;
+
 // Recalculate subtotals and totals from line items so exported numbers always reconcile
 function recalculateTotals(type: AssetType, data: AssetData): AssetData {
   switch (type) {
@@ -92,29 +265,58 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
         item.total = round2(item.quantity * item.unitPrice);
       });
       d.subtotal = round2(d.lineItems.reduce((sum, item) => sum + item.total, 0));
-      d.tax = round2(d.subtotal * 0.08);
-      d.total = round2(d.subtotal + d.tax);
+      if (d.taxes?.length) {
+        d.taxes.forEach(t => { t.amount = round2(d.subtotal * t.rate); });
+        d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
+      } else if (d.tax) {
+        d.taxes = [{ name: 'Tax', rate: d.subtotal > 0 ? round2(d.tax / d.subtotal) : 0, amount: round2(d.tax) }];
+        d.taxTotal = round2(d.tax);
+      } else {
+        d.taxes = [{ name: 'Tax', rate: 0.08, amount: round2(d.subtotal * 0.08) }];
+        d.taxTotal = d.taxes[0].amount;
+      }
+      d.tax = d.taxTotal!;
+      d.total = round2(d.subtotal + d.taxTotal!);
       return d;
     }
     case 'receipt': {
       const d = data as ReceiptData;
       if (!d.items?.length) return data;
       d.subtotal = round2(d.items.reduce((sum, item) => sum + round2(item.quantity * item.price), 0));
-      d.tax = round2(d.tax || d.subtotal * 0.08);
+      if (d.taxes?.length) {
+        d.taxes.forEach(t => { t.amount = round2(d.subtotal * t.rate); });
+        d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
+      } else if (d.tax) {
+        d.taxes = [{ name: 'Tax', rate: d.subtotal > 0 ? round2(d.tax / d.subtotal) : 0, amount: round2(d.tax) }];
+        d.taxTotal = round2(d.tax);
+      } else {
+        d.taxes = [{ name: 'Tax', rate: 0.08, amount: round2(d.subtotal * 0.08) }];
+        d.taxTotal = d.taxes[0].amount;
+      }
+      d.tax = d.taxTotal!;
       const tip = d.tip ? round2(d.tip) : 0;
-      d.total = round2(d.subtotal + d.tax + tip);
+      d.total = round2(d.subtotal + d.taxTotal! + tip);
       return d;
     }
     case 'paper_receipt': {
-      const d = data as any;
+      const d = data as PaperReceiptData;
       if (!d.items?.length) return data;
-      d.items.forEach((item: any) => {
+      d.items.forEach((item) => {
         item.total = round2(item.quantity * item.unitPrice);
       });
-      d.subtotal = round2(d.items.reduce((sum: number, item: any) => sum + item.total, 0));
-      d.taxAmount = round2(d.subtotal * (d.taxRate || 0.0825));
+      d.subtotal = round2(d.items.reduce((sum, item) => sum + item.total, 0));
+      if (d.taxes?.length) {
+        d.taxes.forEach(t => { t.amount = round2(d.subtotal * t.rate); });
+        d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
+      } else {
+        const rate = d.taxRate || 0.0825;
+        d.taxes = [{ name: 'Tax', rate, amount: round2(d.subtotal * rate) }];
+        d.taxTotal = d.taxes[0].amount;
+      }
+      d.taxAmount = d.taxTotal!;
+      d.taxRate = d.taxes[0]?.rate || 0;
       const tip = d.tip ? round2(d.tip) : 0;
-      d.total = round2(d.subtotal + d.taxAmount + tip);
+      d.total = round2(d.subtotal + d.taxTotal! + tip);
       return d;
     }
     case 'quote': {
@@ -764,10 +966,14 @@ JSON Structure for paper_receipt:
     }
   ],
   "subtotal": number,
-  "taxRate": number (decimal like 0.0825),
-  "taxAmount": number,
+  "taxes": [
+    { "name": "string (tax name appropriate for ${currency} region - e.g. Sales Tax, VAT, GST, HST, Moms, MVA, IVA, etc.)", "rate": number (decimal), "amount": number }
+  ],
+  "taxTotal": number (sum of all tax amounts),
+  "taxRate": number (primary tax rate as decimal for backward compat),
+  "taxAmount": number (same as taxTotal for backward compat),
   "tip": number (optional - INCLUDE FOR RESTAURANT/MEAL/DINING receipts, calculate ~18-20% gratuity or use mentioned amount),
-  "total": number (subtotal + taxAmount + tip if applicable),
+  "total": number (subtotal + taxTotal + tip if applicable),
   "payment": {
     "method": "credit" | "debit" | "cash" | "mobile",
     "cardType": "string (VISA, Mastercard, AMEX, etc. - only if card)",
@@ -781,6 +987,9 @@ JSON Structure for paper_receipt:
   "barcode": "string (confirmation code or transaction ID)",
   "footer": ["array of 1-3 appropriate footer messages for this receipt type"]
 }
+
+${getTaxGuidance(currency)}
+Apply the correct tax name(s) and rate(s) for the ${currency} region. Consider category-specific rates (e.g., food may be taxed differently).
 
 Return ONLY valid JSON, no markdown or explanation.`;
     triggers = [
@@ -820,12 +1029,19 @@ JSON Structure for receipt:
     }
   ],
   "subtotal": number,
-  "tax": number,
+  "taxes": [
+    { "name": "string (tax name appropriate for ${currency} region)", "rate": number (decimal), "amount": number }
+  ],
+  "taxTotal": number (sum of all tax amounts),
+  "tax": number (same as taxTotal for backward compat),
   "tip": number (optional - INCLUDE FOR RESTAURANT/MEAL/DINING receipts, calculate ~18-20% gratuity or use mentioned amount),
-  "total": number (subtotal + tax + tip if applicable),
+  "total": number (subtotal + taxTotal + tip if applicable),
   "paymentMethod": "string (from description - 'Corporate Card', 'Visa', 'Amex', etc.)",
   "cardLast4": "string (if mentioned, otherwise generate 4 digits)"
 }
+
+${getTaxGuidance(currency)}
+Apply the correct tax name(s) and rate(s) for the ${currency} region.
 
 Return ONLY valid JSON, no markdown or explanation.`;
     triggers = [
@@ -931,6 +1147,8 @@ VENDOR REQUIREMENTS:
 - Use well-known national brands or real regional businesses
 - All generated content MUST be related to ${spendingCategory}
 - IMPORTANT: Include the vendor's actual website domain (e.g., "dell.com", "staples.com") for logo display
+
+${getTaxGuidance(currency)}
 `;
 
   switch (type) {
@@ -979,18 +1197,27 @@ JSON Structure:
     { "id": "string (unique UUID v4)", "description": "string (DETAILED specific product/service with model numbers, specs, or deliverables)", "quantity": number, "unitPrice": number, "total": number }
   ],
   "subtotal": number,
-  "tax": number (calculate ~8% tax),
+  "taxes": [
+    { "name": "string (tax name per rules above, e.g. VAT, GST, Sales Tax, HST, CGST, SGST, IVA, MwSt, Moms, MVA, etc.)", "rate": number (decimal, e.g. 0.13 for 13%), "amount": number }
+  ],
+  "taxTotal": number (sum of all tax amounts),
+  "tax": number (same value as taxTotal for backward compatibility),
   "total": number,
   "paymentTerms": "Net 30",
   "remitTo": {
-    "bankName": "string (a real major US bank like JPMorgan Chase, Bank of America, Wells Fargo, Citibank, etc.)",
+    "bankName": "string (a real major bank appropriate for the ${currency} region)",
     "accountName": "string (vendor company name)",
-    "routingNumber": "string (9-digit valid ABA routing number format - use a realistic but fictional number like 021000021, 121000248, etc.)",
+    "routingNumber": "string (9-digit valid format - use a realistic but fictional number)",
     "accountNumber": "string (10-12 digit account number - generate a realistic fictional number)"
   },
   "notes": "string (optional thank you note)"
 }
 
+${B2B_TAX_RULES}
+The CLIENT is located at: ${company.location}
+The VENDOR's location will be determined by you based on the vendor you select. Evaluate whether this is a domestic or cross-border transaction and apply the correct B2B tax treatment from the rules above. If cross-border, apply export exemptions or reverse charge as appropriate and include explanatory notes.
+
+Apply the tax rules above for ${currency}. Use the correct tax name(s), rate(s), and number of tax lines for the region. If multiple tax components apply (e.g. GST + PST in Canada, or CGST + SGST in India), include each as a separate entry in the taxes array. Consider category-specific rates where applicable.
 Generate exactly ${lineItemCount || 4} line items with realistic pricing for a ${company.employeeCount} employee company purchasing ${spendingCategory} related items/services.`;
 
     case 'receipt':
@@ -1027,12 +1254,17 @@ JSON Structure:
     { "description": "string (SPECIFIC brand + product name + model)", "quantity": number, "price": number (unit price) }
   ],
   "subtotal": number,
-  "tax": number (calculate ~8% tax),
+  "taxes": [
+    { "name": "string (tax name per rules above)", "rate": number (decimal), "amount": number }
+  ],
+  "taxTotal": number (sum of all tax amounts),
+  "tax": number (same value as taxTotal for backward compatibility),
   "total": number,
   "paymentMethod": "Corporate Card",
   "cardLast4": "string (4 digits)"
 }
 
+Apply the tax rules above for ${currency}. Use the correct tax name(s) and rate(s) for the region. Consider category-specific rates for the items being purchased.
 Generate 2-4 items. Keep the total reasonable for a single ${spendingCategory} purchase (typically under $500).`;
 
     case 'paper_receipt':
@@ -1091,8 +1323,12 @@ JSON Structure:
     }
   ],
   "subtotal": number,
-  "taxRate": number (decimal like 0.0825 for 8.25%),
-  "taxAmount": number,
+  "taxes": [
+    { "name": "string (tax name per rules above)", "rate": number (decimal), "amount": number }
+  ],
+  "taxTotal": number (sum of all tax amounts),
+  "taxRate": number (primary tax rate as decimal for backward compat),
+  "taxAmount": number (same as taxTotal for backward compat),
   "total": number,
   "payment": {
     "method": "credit" | "debit" | "cash" | "mobile",
@@ -1108,6 +1344,7 @@ JSON Structure:
   "footer": ["string array of 1-3 typical receipt footer messages like 'Thank you!', 'Survey: www.survey.com', 'Return Policy: 30 days']"
 }
 
+Apply the tax rules above for ${currency}. Use the correct tax name(s) and rate(s) for the region. Consider category-specific rates for the items being purchased (e.g., food may be taxed differently than other goods).
 Generate 3-6 items. Keep the total under $200 for a typical expense purchase.`;
 
     case 'quote':
@@ -1610,17 +1847,27 @@ JSON Structure:
     { "id": "string (unique UUID v4 - reuse the quote item ID if this line item maps to a quoted item)", "description": "string (service from quote/contract with phase/progress indicator)", "quantity": number, "unitPrice": number, "total": number }
   ],
   "subtotal": number,
-  "tax": number (calculate ~8% tax),
+  "taxes": [
+    { "name": "string (tax name appropriate for ${currency} region)", "rate": number (decimal), "amount": number }
+  ],
+  "taxTotal": number (sum of all tax amounts),
+  "tax": number (same value as taxTotal for backward compatibility),
   "total": number,
   "paymentTerms": "Net 30",
   "remitTo": {
-    "bankName": "string (a real major US bank)",
+    "bankName": "string (a real major bank for the ${currency} region)",
     "accountName": "${vendorInfo?.name}",
     "routingNumber": "string (9-digit)",
     "accountNumber": "string (10-12 digit)"
   },
   "notes": "string (${invoiceConfig ? `mention this is invoice ${invoiceConfig.invoiceNumber} of ${invoiceConfig.totalInvoices} and reference the quote/contract` : 'reference the quote/contract in the note'})"
 }
+
+${getTaxGuidance(currency)}
+
+${B2B_TAX_RULES}
+The CLIENT is located at: ${company.location}
+The VENDOR is: ${vendorInfo?.name} located at ${vendorInfo?.address}. Evaluate whether this is a domestic or cross-border transaction and apply the correct B2B tax treatment.
 
 Generate exactly ${lineItemCount || 3} line items that represent billable work from the quoted/contracted services.`;
   }
