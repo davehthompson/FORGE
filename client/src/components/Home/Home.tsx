@@ -23,9 +23,6 @@ export function Home() {
           <h1 className="text-4xl font-bold text-ramp-slate mb-4">
             Welcome to FORGE
           </h1>
-          <p className="text-lg text-ramp-sage">
-            File Output for Ramp Generated Examples
-          </p>
           <p className="text-ramp-gray-600 mt-2">
             Choose how you'd like to create your demo assets
           </p>
