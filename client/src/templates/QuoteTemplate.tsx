@@ -161,7 +161,7 @@ export function QuoteTemplate({ data, scale = 1, currency = 'USD' }: QuoteTempla
               style={{ borderBottom: `1px solid ${accentBorderColor}` }}
             >
               <span>Discount</span>
-              <span>-{formatCurrency(data.discount)}</span>
+              <span>-{formatCurrency(data.discount!)}</span>
             </div>
           )}
           <div 
