@@ -1790,27 +1790,43 @@ Transform the quoted line items into contract service descriptions. Include 7-9 
     let invoiceNumberSuffix = '';
     
     if (invoiceConfig) {
-      const { invoiceNumber, totalInvoices, isLast, previousInvoicedAmount, targetSubtotal, splitPercentage } = invoiceConfig;
+      const { invoiceNumber, totalInvoices, isLast, previousInvoicedAmount, targetSubtotal, splitPercentage, matchingMode } = invoiceConfig;
       invoiceNumberSuffix = `-${invoiceNumber}`;
       
       const remainingBalance = totalAmount - previousInvoicedAmount;
       const label = `Payment ${invoiceNumber} of ${totalInvoices} (${splitPercentage}%)`;
-      
+      const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      const proportionalInstructions = matchingMode === '2way' && quote ? `
+PROPORTIONAL LINE ITEMS (2-Way Matching Mode):
+- Use the EXACT SAME line item descriptions and IDs from the quote — do NOT rename or rephrase them
+- Each line item's total = quoted total × ${splitPercentage}% (the split percentage for this invoice)
+- Keep quantity at 1 for each item and set unitPrice = item total (these are license/subscription payments)
+- Concrete targets for each line item:
+${quote.items.map(item => `  - "${item.description}" → $${fmt(Math.round(item.total * splitPercentage / 100 * 100) / 100)}`).join('\n')}
+- The sum of these amounts MUST equal exactly $${fmt(targetSubtotal)}` : `
+PHASE-BASED LINE ITEMS (3-Way Matching Mode):
+- Invoice line items should represent work completed or goods received in this phase/period
+- Descriptions should reflect delivery milestones (e.g., "Phase ${invoiceNumber} - Installation complete")
+- Line item totals must add up to exactly $${fmt(targetSubtotal)}`;
+
       invoiceAmountInstructions = `
 PARTIAL INVOICE INSTRUCTIONS - CRITICAL AMOUNTS:
 - This is Invoice ${invoiceNumber} of ${totalInvoices} for this agreement (${splitPercentage}% of total)
-- Quote/Contract Total: $${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- Previously Invoiced: $${previousInvoicedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- Remaining Balance: $${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- **THIS INVOICE SUBTOTAL MUST BE EXACTLY: $${targetSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}**
+- Quote/Contract Total: $${fmt(totalAmount)}
+- Previously Invoiced: $${fmt(previousInvoicedAmount)}
+- Remaining Balance: $${fmt(remainingBalance)}
+- **THIS INVOICE SUBTOTAL MUST BE EXACTLY: $${fmt(targetSubtotal)}**
 - Label this invoice as: "${label}"
 - ${isLast ? 'This is the FINAL invoice - the subtotal MUST equal the exact remaining balance above' : 'Ensure line items add up to the exact subtotal specified'}
-- Invoice line items should represent work completed in this phase/period
+${proportionalInstructions}
 
 AMOUNT VERIFICATION:
-- Your line item totals MUST add up to exactly $${targetSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- Your line item totals MUST add up to exactly $${fmt(targetSubtotal)}
 - Tax is calculated separately on top of the subtotal
-- After all ${totalInvoices} invoices, the combined subtotals must equal $${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+- After all ${totalInvoices} invoices, the combined subtotals must equal $${fmt(totalAmount)}
+
+TAX CONSISTENCY: All ${totalInvoices} invoices in this series MUST use the same tax name and rate. Use the tax rate appropriate for the vendor's location. Do NOT vary the tax rate between invoices.`;
     }
 
     const lineItemsSource = quote ? `

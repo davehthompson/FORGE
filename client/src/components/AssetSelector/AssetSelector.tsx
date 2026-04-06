@@ -68,6 +68,8 @@ export function AssetSelector() {
     setError,
     invoiceCount,
     setInvoiceCount,
+    matchingMode,
+    setMatchingMode,
     lineItemCount,
     setLineItemCount,
     setGeneratedInvoices,
@@ -126,7 +128,8 @@ export function AssetSelector() {
           },
           invoiceCount,
           selectedCurrency,
-          lineItemCount
+          lineItemCount,
+          matchingMode
         );
         
         // Store single assets (quote, contract, receipt)
@@ -163,9 +166,10 @@ export function AssetSelector() {
               );
             }
           },
-          1, // Single invoice if needed
+          1,
           selectedCurrency,
-          lineItemCount
+          lineItemCount,
+          matchingMode
         );
         
         Object.entries(result.assets).forEach(([type, data]) => {
@@ -402,7 +406,7 @@ export function AssetSelector() {
                   
                   {/* Invoice count selector */}
                   {selectedAssets.includes('invoice') && (
-                    <div className="mt-4 pt-3 border-t border-ramp-spring/20">
+                    <div className="mt-4 pt-3 border-t border-ramp-spring/20 space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-medium text-ramp-slate">Number of Invoices</p>
@@ -428,6 +432,39 @@ export function AssetSelector() {
                           </button>
                         </div>
                       </div>
+
+                      {/* Matching mode selector */}
+                      {invoiceCount > 1 && (
+                        <div>
+                          <p className="text-sm font-medium text-ramp-slate mb-2">Matching Mode</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setMatchingMode('2way')}
+                              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors border ${
+                                matchingMode === '2way'
+                                  ? 'bg-ramp-spring/20 border-ramp-spring text-ramp-slate'
+                                  : 'border-ramp-gray-200 text-ramp-sage hover:bg-ramp-gray-50'
+                              }`}
+                            >
+                              <span className="block font-semibold">2-Way Match</span>
+                              <span className="block mt-0.5 opacity-70">PO → Invoice</span>
+                              <span className="block mt-0.5 opacity-50">Software, SaaS, services</span>
+                            </button>
+                            <button
+                              onClick={() => setMatchingMode('3way')}
+                              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors border ${
+                                matchingMode === '3way'
+                                  ? 'bg-ramp-spring/20 border-ramp-spring text-ramp-slate'
+                                  : 'border-ramp-gray-200 text-ramp-sage hover:bg-ramp-gray-50'
+                              }`}
+                            >
+                              <span className="block font-semibold">3-Way Match</span>
+                              <span className="block mt-0.5 opacity-70">PO → Receipt → Invoice</span>
+                              <span className="block mt-0.5 opacity-50">Physical goods, equipment</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

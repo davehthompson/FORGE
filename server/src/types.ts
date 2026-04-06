@@ -317,6 +317,7 @@ export interface InvoiceConfig {
   splitPercentage: number;    // Display percentage for this invoice (e.g. 45)
   isLast: boolean;            // Whether this is the final invoice
   previousInvoicedAmount: number; // Sum of all previous invoice subtotals
+  matchingMode?: '2way' | '3way'; // 2-way: proportional line items from quote; 3-way: phase-based descriptions
 }
 
 export type AssetData = InvoiceData | ReceiptData | PaperReceiptData | HotelFolioData | AirlineReceiptData | QuoteData | ContractData;

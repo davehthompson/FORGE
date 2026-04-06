@@ -209,7 +209,8 @@ export async function generateConnectedAssetsStreaming(
   onStatus: (type: AssetType, status: string, invoiceIndex?: number) => void,
   invoiceCount: number = 2,
   currency: string = 'USD',
-  lineItemCount?: number
+  lineItemCount?: number,
+  matchingMode: '2way' | '3way' = '2way'
 ): Promise<ConnectedGenerationResult> {
   const results: Partial<Record<AssetType, AssetData>> = {};
   const invoices: InvoiceData[] = [];
@@ -267,6 +268,7 @@ export async function generateConnectedAssetsStreaming(
                 splitPercentage: split.percentage,
                 isLast,
                 previousInvoicedAmount,
+                matchingMode,
               },
             }),
           });

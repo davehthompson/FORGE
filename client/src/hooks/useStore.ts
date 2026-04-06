@@ -40,6 +40,10 @@ interface AppState {
   invoiceCount: number;
   setInvoiceCount: (count: number) => void;
 
+  // Matching mode for connected invoice flow
+  matchingMode: '2way' | '3way';
+  setMatchingMode: (mode: '2way' | '3way') => void;
+
   // Line item count per document
   lineItemCount: number;
   setLineItemCount: (count: number) => void;
@@ -90,6 +94,7 @@ const initialState = {
   quickReceiptType: 'receipt' as 'receipt' | 'paper_receipt',
   selectedAssets: [] as AssetType[],
   invoiceCount: 2,
+  matchingMode: '2way' as '2way' | '3way',
   lineItemCount: 4,
   generatedAssets: {
     invoice: null,
@@ -138,6 +143,8 @@ export const useStore = create<AppState>((set) => ({
   clearAssets: () => set({ selectedAssets: [] }),
 
   setInvoiceCount: (count) => set({ invoiceCount: count }),
+
+  setMatchingMode: (mode) => set({ matchingMode: mode }),
 
   setLineItemCount: (count) => set({ lineItemCount: count }),
 
