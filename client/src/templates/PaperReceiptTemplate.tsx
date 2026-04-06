@@ -139,7 +139,7 @@ export function PaperReceiptTemplate({ data, scale = 1, currency = 'USD' }: Pape
             {item.sku && (
               <div className="text-gray-400 text-[10px] pl-2">SKU: {item.sku}</div>
             )}
-            {item.discount && item.discount > 0 && (
+            {(item.discount ?? 0) > 0 && (
               <div className="text-gray-600 pl-2">
                 DISCOUNT: -{formatPrice(item.discount)}
               </div>

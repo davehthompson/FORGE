@@ -155,7 +155,7 @@ export function QuoteTemplate({ data, scale = 1, currency = 'USD' }: QuoteTempla
             <span className="text-ramp-gray-600">Subtotal</span>
             <span className="text-ramp-slate">{formatCurrency(data.subtotal)}</span>
           </div>
-          {data.discount && data.discount > 0 && (
+          {(data.discount ?? 0) > 0 && (
             <div 
               className="flex justify-between py-2 text-ramp-rust"
               style={{ borderBottom: `1px solid ${accentBorderColor}` }}
