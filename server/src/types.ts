@@ -317,7 +317,14 @@ export interface InvoiceConfig {
   splitPercentage: number;    // Display percentage for this invoice (e.g. 45)
   isLast: boolean;            // Whether this is the final invoice
   previousInvoicedAmount: number; // Sum of all previous invoice subtotals
-  matchingMode?: '2way' | '3way'; // 2-way: proportional line items from quote; 3-way: phase-based descriptions
+  matchingMode?: '2way' | '3way'; // 2-way: proportional line items from quote; 3-way: quantity-based partial delivery
+  quantitySplits?: {              // Pre-computed line items for 3-way mode (quantity-based)
+    description: string;
+    id: string;
+    quantity: number;
+    unitPrice: number;
+    total: number;
+  }[];
 }
 
 export type AssetData = InvoiceData | ReceiptData | PaperReceiptData | HotelFolioData | AirlineReceiptData | QuoteData | ContractData;

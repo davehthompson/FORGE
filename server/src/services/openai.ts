@@ -1790,25 +1790,40 @@ Transform the quoted line items into contract service descriptions. Include 7-9 
     let invoiceNumberSuffix = '';
     
     if (invoiceConfig) {
-      const { invoiceNumber, totalInvoices, isLast, previousInvoicedAmount, targetSubtotal, splitPercentage, matchingMode } = invoiceConfig;
+      const { invoiceNumber, totalInvoices, isLast, previousInvoicedAmount, targetSubtotal, splitPercentage, matchingMode, quantitySplits } = invoiceConfig;
       invoiceNumberSuffix = `-${invoiceNumber}`;
       
       const remainingBalance = totalAmount - previousInvoicedAmount;
       const label = `Payment ${invoiceNumber} of ${totalInvoices} (${splitPercentage}%)`;
       const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-      const proportionalInstructions = matchingMode === '2way' && quote ? `
+      let lineItemModeInstructions: string;
+
+      if (matchingMode === '2way' && quote) {
+        lineItemModeInstructions = `
 PROPORTIONAL LINE ITEMS (2-Way Matching Mode):
 - Use the EXACT SAME line item descriptions and IDs from the quote — do NOT rename or rephrase them
 - Each line item's total = quoted total × ${splitPercentage}% (the split percentage for this invoice)
 - Keep quantity at 1 for each item and set unitPrice = item total (these are license/subscription payments)
 - Concrete targets for each line item:
 ${quote.items.map(item => `  - "${item.description}" → $${fmt(Math.round(item.total * splitPercentage / 100 * 100) / 100)}`).join('\n')}
-- The sum of these amounts MUST equal exactly $${fmt(targetSubtotal)}` : `
-PHASE-BASED LINE ITEMS (3-Way Matching Mode):
-- Invoice line items should represent work completed or goods received in this phase/period
-- Descriptions should reflect delivery milestones (e.g., "Phase ${invoiceNumber} - Installation complete")
+- The sum of these amounts MUST equal exactly $${fmt(targetSubtotal)}`;
+      } else if (matchingMode === '3way' && quantitySplits && quantitySplits.length > 0) {
+        lineItemModeInstructions = `
+QUANTITY-BASED LINE ITEMS (3-Way Matching Mode - Partial Delivery ${invoiceNumber} of ${totalInvoices}):
+- Use the EXACT SAME line item descriptions and IDs from the quote — do NOT rename or rephrase them
+- Use the EXACT SAME unit prices from the quote
+- This invoice represents a PARTIAL DELIVERY with these specific quantities and amounts:
+${quantitySplits.map(li => `  - [ID: ${li.id}] "${li.description}": ${li.quantity} units × $${fmt(li.unitPrice)} = $${fmt(li.total)}`).join('\n')}
+- The subtotal MUST equal exactly $${fmt(targetSubtotal)}
+- Each line item's quantity, unitPrice, and total MUST match the values above exactly
+- This represents a shipment/delivery of goods that will be received and matched against the original PO`;
+      } else {
+        lineItemModeInstructions = `
+PHASE-BASED LINE ITEMS:
+- Invoice line items should represent work completed or goods delivered in this phase/period
 - Line item totals must add up to exactly $${fmt(targetSubtotal)}`;
+      }
 
       invoiceAmountInstructions = `
 PARTIAL INVOICE INSTRUCTIONS - CRITICAL AMOUNTS:
@@ -1819,7 +1834,7 @@ PARTIAL INVOICE INSTRUCTIONS - CRITICAL AMOUNTS:
 - **THIS INVOICE SUBTOTAL MUST BE EXACTLY: $${fmt(targetSubtotal)}**
 - Label this invoice as: "${label}"
 - ${isLast ? 'This is the FINAL invoice - the subtotal MUST equal the exact remaining balance above' : 'Ensure line items add up to the exact subtotal specified'}
-${proportionalInstructions}
+${lineItemModeInstructions}
 
 AMOUNT VERIFICATION:
 - Your line item totals MUST add up to exactly $${fmt(targetSubtotal)}

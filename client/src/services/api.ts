@@ -195,6 +195,105 @@ export function generateInvoiceSplits(count: number, totalAmount: number): { per
   return splits;
 }
 
+interface QuoteItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+interface QuantityInvoiceSplit {
+  percentage: number;
+  subtotal: number;
+  lineItems: { description: string; id: string; quantity: number; unitPrice: number; total: number }[];
+}
+
+/**
+ * Split quote line-item quantities across invoices for 3-way matching.
+ * Each invoice gets a random share of each item's quantity (whole numbers, min ~15%).
+ * Unit prices stay constant; subtotal = sum of qty * unitPrice per item.
+ */
+export function computeQuantitySplits(quoteItems: QuoteItem[], invoiceCount: number): QuantityInvoiceSplit[] {
+  if (invoiceCount === 1) {
+    const lineItems = quoteItems.map(item => ({
+      description: item.description,
+      id: item.id,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      total: Math.round(item.quantity * item.unitPrice * 100) / 100,
+    }));
+    const subtotal = Math.round(lineItems.reduce((sum, li) => sum + li.total, 0) * 100) / 100;
+    return [{ percentage: 100, subtotal, lineItems }];
+  }
+
+  // For each quote item, split its quantity across invoices
+  const allAllocations: number[][] = []; // allAllocations[itemIdx][invoiceIdx]
+
+  for (const item of quoteItems) {
+    const qty = item.quantity;
+    const allocations: number[] = [];
+
+    if (qty <= invoiceCount) {
+      // Not enough units to split meaningfully — give 1 to first N invoices, 0 to the rest
+      // Then give remainder to last invoice
+      let remaining = qty;
+      for (let i = 0; i < invoiceCount; i++) {
+        if (remaining > 0) {
+          allocations.push(1);
+          remaining--;
+        } else {
+          allocations.push(0);
+        }
+      }
+    } else {
+      // Random split with minimum floor
+      const minPerInvoice = Math.max(1, Math.floor(qty * 0.15 / invoiceCount));
+      const weights: number[] = [];
+      for (let i = 0; i < invoiceCount; i++) {
+        weights.push(minPerInvoice + Math.random() * (qty - minPerInvoice * invoiceCount));
+      }
+      const weightSum = weights.reduce((a, b) => a + b, 0);
+
+      let allocated = 0;
+      for (let i = 0; i < invoiceCount; i++) {
+        if (i === invoiceCount - 1) {
+          allocations.push(qty - allocated);
+        } else {
+          const share = Math.max(1, Math.round((weights[i] / weightSum) * qty));
+          const capped = Math.min(share, qty - allocated - (invoiceCount - i - 1));
+          allocations.push(capped);
+          allocated += capped;
+        }
+      }
+    }
+
+    allAllocations.push(allocations);
+  }
+
+  // Build the result per invoice
+  const totalQuoteAmount = quoteItems.reduce((sum, item) => sum + item.total, 0);
+  const results: QuantityInvoiceSplit[] = [];
+
+  for (let inv = 0; inv < invoiceCount; inv++) {
+    const lineItems = quoteItems.map((item, itemIdx) => {
+      const qty = allAllocations[itemIdx][inv];
+      return {
+        description: item.description,
+        id: item.id,
+        quantity: qty,
+        unitPrice: item.unitPrice,
+        total: Math.round(qty * item.unitPrice * 100) / 100,
+      };
+    });
+    const subtotal = Math.round(lineItems.reduce((sum, li) => sum + li.total, 0) * 100) / 100;
+    const percentage = Math.round((subtotal / totalQuoteAmount) * 100);
+    results.push({ percentage, subtotal, lineItems });
+  }
+
+  return results;
+}
+
 // Result type for connected generation (includes multiple invoices)
 export interface ConnectedGenerationResult {
   assets: Partial<Record<AssetType, AssetData>>;
@@ -230,20 +329,36 @@ export async function generateConnectedAssetsStreaming(
       // For invoices in connected flow, generate multiple
       if (quoteData || contractData) {
         const totalAmount = quoteData?.total || contractData?.totalValue || 10000;
-        const splits = generateInvoiceSplits(invoiceCount, totalAmount);
+
+        // For 3-way mode with a quote, compute quantity-based splits; otherwise use dollar splits
+        const use3WayQty = matchingMode === '3way' && quoteData;
+        const qtySplits = use3WayQty ? computeQuantitySplits(quoteData!.items, invoiceCount) : null;
+        const dollarSplits = qtySplits ? null : generateInvoiceSplits(invoiceCount, totalAmount);
+
         let previousInvoicedAmount = 0;
         
         for (let i = 0; i < invoiceCount; i++) {
-          const split = splits[i];
           const isLast = i === invoiceCount - 1;
           const invoiceNumber = i + 1;
 
-          // For the final invoice, use the exact remainder to absorb any drift from prior invoices
-          const targetSubtotal = isLast
-            ? Math.round((totalAmount - previousInvoicedAmount) * 100) / 100
-            : split.subtotal;
+          let targetSubtotal: number;
+          let splitPercentage: number;
+          let quantitySplitsForInvoice: typeof qtySplits extends null ? undefined : NonNullable<typeof qtySplits>[number]['lineItems'] | undefined;
+
+          if (qtySplits) {
+            targetSubtotal = qtySplits[i].subtotal;
+            splitPercentage = qtySplits[i].percentage;
+            quantitySplitsForInvoice = qtySplits[i].lineItems;
+          } else {
+            const split = dollarSplits![i];
+            splitPercentage = split.percentage;
+            targetSubtotal = isLast
+              ? Math.round((totalAmount - previousInvoicedAmount) * 100) / 100
+              : split.subtotal;
+            quantitySplitsForInvoice = undefined;
+          }
           
-          onStatus('invoice', `Generating invoice ${i + 1} of ${invoiceCount} (${split.percentage}%)...`, i);
+          onStatus('invoice', `Generating invoice ${i + 1} of ${invoiceCount} (${splitPercentage}%)...`, i);
           
           const invoiceRelatedAssets: RelatedAssetContext = {
             quote: quoteData,
@@ -265,10 +380,11 @@ export async function generateConnectedAssetsStreaming(
                 totalInvoices: invoiceCount,
                 totalAmount,
                 targetSubtotal,
-                splitPercentage: split.percentage,
+                splitPercentage,
                 isLast,
                 previousInvoicedAmount,
                 matchingMode,
+                ...(quantitySplitsForInvoice ? { quantitySplits: quantitySplitsForInvoice } : {}),
               },
             }),
           });
