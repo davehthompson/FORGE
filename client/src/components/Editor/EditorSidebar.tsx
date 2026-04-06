@@ -693,6 +693,66 @@ function ContractEditor({ data, onChange }: { data: ContractData; onChange: (dat
           value={data.paymentSchedule}
           onChange={(e) => onChange({ ...data, paymentSchedule: e.target.value })}
         />
+        <Input
+          label="Billing Frequency"
+          value={data.billingFrequency || ''}
+          onChange={(e) => onChange({ ...data, billingFrequency: e.target.value })}
+        />
+        <Input
+          label="Payment Due (days)"
+          type="number"
+          value={numVal(data.paymentDueDays ?? 30)}
+          onChange={(e) => onChange({ ...data, paymentDueDays: parseInt(e.target.value) || 30 })}
+        />
+      </Section>
+
+      <Section title="Renewal & Termination">
+        <div className="flex items-center gap-2 mb-2">
+          <input
+            type="checkbox"
+            checked={data.autoRenewal ?? true}
+            onChange={(e) => {
+              const autoRenewal = e.target.checked;
+              const renewalNoticeDays = data.renewalNoticeDays || 60;
+              let lastDateToAction = data.lastDateToAction;
+              if (autoRenewal && data.expirationDate) {
+                const exp = new Date(data.expirationDate);
+                exp.setDate(exp.getDate() - renewalNoticeDays);
+                lastDateToAction = exp.toISOString().split('T')[0];
+              }
+              onChange({ ...data, autoRenewal, renewalNoticeDays, lastDateToAction });
+            }}
+            className="w-4 h-4 rounded border-ramp-gray-300"
+          />
+          <span className="text-sm text-ramp-slate">Auto-Renewal</span>
+        </div>
+        <Input
+          label="Renewal Notice (days)"
+          type="number"
+          value={numVal(data.renewalNoticeDays ?? 60)}
+          onChange={(e) => {
+            const renewalNoticeDays = parseInt(e.target.value) || 60;
+            let lastDateToAction = data.lastDateToAction;
+            if (data.expirationDate) {
+              const exp = new Date(data.expirationDate);
+              exp.setDate(exp.getDate() - renewalNoticeDays);
+              lastDateToAction = exp.toISOString().split('T')[0];
+            }
+            onChange({ ...data, renewalNoticeDays, lastDateToAction });
+          }}
+        />
+        <Input
+          label="Last Date to Action"
+          type="date"
+          value={data.lastDateToAction || ''}
+          onChange={(e) => onChange({ ...data, lastDateToAction: e.target.value })}
+        />
+        <Input
+          label="Termination Notice (days)"
+          type="number"
+          value={numVal(data.terminationNoticeDays ?? 30)}
+          onChange={(e) => onChange({ ...data, terminationNoticeDays: parseInt(e.target.value) || 30 })}
+        />
       </Section>
 
       <Section title="Signatures">

@@ -330,8 +330,13 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
       return d;
     }
     case 'contract': {
-      // Contract services are strings; totalValue is set by GPT - no line-item recalculation needed
-      return data;
+      const d = data as ContractData;
+      if (d.expirationDate && d.renewalNoticeDays) {
+        const exp = new Date(d.expirationDate);
+        exp.setDate(exp.getDate() - d.renewalNoticeDays);
+        d.lastDateToAction = exp.toISOString().split('T')[0];
+      }
+      return d;
     }
     case 'hotel_folio': {
       const d = data as HotelFolioData;
@@ -1445,13 +1450,28 @@ JSON Structure:
   "terms": ["string (contract term 1)", "string (contract term 2)", ...],
   "totalValue": number (annual contract value for ${spendingCategory} services),
   "paymentSchedule": "string (e.g., Monthly, Quarterly)",
+  "autoRenewal": boolean (true if contract auto-renews),
+  "renewalNoticeDays": number (days before expiration that written notice is required to cancel, e.g. 60),
+  "lastDateToAction": "string (ISO date: expirationDate minus renewalNoticeDays — the deadline to provide cancellation notice)",
+  "terminationNoticeDays": number (days of written notice required for termination for convenience, e.g. 30),
+  "terminationClause": "string (full termination clause text, e.g. 'Either party may terminate this agreement with 30 days written notice...')",
+  "billingFrequency": "string (e.g., Monthly, Quarterly, Annually)",
+  "paymentDueDays": number (days after invoice date that payment is due, e.g. 30 for Net 30),
   "signatures": {
     "provider": { "name": "string", "title": "string" },
     "client": { "name": "string", "title": "string (appropriate for ${company.employeeCount} employee company)" }
   }
 }
 
-Generate exactly ${lineItemCount || 5} specific ${spendingCategory} services and 5-7 standard contract terms. Set contract value appropriate for a ${company.employeeCount} employee company's ${spendingCategory} needs.`;
+MANDATORY CONTRACT TERMS — the "terms" array MUST include ALL of the following as natural contract language:
+1. An AUTO-RENEWAL clause: "This agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least [renewalNoticeDays] days prior to the expiration date."
+2. A TERMINATION FOR CONVENIENCE clause: "Either party may terminate this agreement for convenience upon [terminationNoticeDays] days prior written notice to the other party."
+3. A PAYMENT TERMS clause: "Invoices shall be issued [billingFrequency] and are due within [paymentDueDays] days of the invoice date."
+4. Additional standard terms (confidentiality, liability, governing law, etc.)
+
+Calculate lastDateToAction by subtracting renewalNoticeDays from the expirationDate (${expirationDateStr}). For example, if expirationDate is 2027-03-15 and renewalNoticeDays is 60, lastDateToAction would be 2027-01-14.
+
+Generate exactly ${lineItemCount || 5} specific ${spendingCategory} services and 7-9 contract terms (including the 3 mandatory ones above). Set contract value appropriate for a ${company.employeeCount} employee company's ${spendingCategory} needs.`;
 
     case 'hotel_folio':
       const checkInDate = new Date(today);
@@ -1721,13 +1741,28 @@ JSON Structure:
   "terms": ["string (contract term)", ...],
   "totalValue": ${quote.total},
   "paymentSchedule": "string (e.g., Monthly, Quarterly, or as invoiced)",
+  "autoRenewal": boolean (true if contract auto-renews),
+  "renewalNoticeDays": number (days before expiration notice is required, e.g. 60),
+  "lastDateToAction": "string (ISO date: expirationDate minus renewalNoticeDays)",
+  "terminationNoticeDays": number (days of written notice for termination, e.g. 30),
+  "terminationClause": "string (full termination clause text)",
+  "billingFrequency": "string (e.g., Monthly, Quarterly, Annually)",
+  "paymentDueDays": number (days after invoice date payment is due, e.g. 30),
   "signatures": {
     "provider": { "name": "string", "title": "string" },
     "client": { "name": "string", "title": "string" }
   }
 }
 
-Transform the quoted line items into contract service descriptions. Include 5-7 standard contract terms.`;
+MANDATORY CONTRACT TERMS — the "terms" array MUST include ALL of the following as natural contract language:
+1. An AUTO-RENEWAL clause: "This agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least [renewalNoticeDays] days prior to the expiration date."
+2. A TERMINATION FOR CONVENIENCE clause: "Either party may terminate this agreement for convenience upon [terminationNoticeDays] days prior written notice to the other party."
+3. A PAYMENT TERMS clause: "Invoices shall be issued [billingFrequency] and are due within [paymentDueDays] days of the invoice date."
+4. Additional standard terms (confidentiality, liability, governing law, etc.)
+
+Calculate lastDateToAction by subtracting renewalNoticeDays from the expirationDate (${expirationDateStr}).
+
+Transform the quoted line items into contract service descriptions. Include 7-9 contract terms (including the 3 mandatory ones above).`;
   }
 
   // Invoice connected to Quote and/or Contract

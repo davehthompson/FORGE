@@ -287,6 +287,13 @@ export interface ContractData {
   terms: string[];
   totalValue: number;
   paymentSchedule: string;
+  autoRenewal?: boolean;
+  renewalNoticeDays?: number;
+  lastDateToAction?: string;
+  terminationNoticeDays?: number;
+  terminationClause?: string;
+  billingFrequency?: string;
+  paymentDueDays?: number;
   signatures: {
     provider: { name: string; title: string };
     client: { name: string; title: string };

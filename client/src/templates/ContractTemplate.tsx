@@ -129,6 +129,20 @@ export function ContractTemplate({ data, scale = 1, currency = 'USD' }: Contract
             <p className="text-sm text-ramp-gray-600">Expiration Date</p>
             <p className="font-semibold text-ramp-slate">{data.expirationDate}</p>
           </div>
+          {data.lastDateToAction && (
+            <div>
+              <p className="text-sm text-ramp-gray-600">Last Date to Action</p>
+              <p className="font-semibold text-ramp-slate">{data.lastDateToAction}</p>
+            </div>
+          )}
+          {data.autoRenewal !== undefined && (
+            <div>
+              <p className="text-sm text-ramp-gray-600">Auto-Renewal</p>
+              <p className="font-semibold text-ramp-slate">
+                {data.autoRenewal ? `Yes — ${data.renewalNoticeDays || 60} days notice required` : 'No'}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
