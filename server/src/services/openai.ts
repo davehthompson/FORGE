@@ -1845,8 +1845,10 @@ TAX CONSISTENCY: All ${totalInvoices} invoices in this series MUST use the same 
     }
 
     const lineItemsSource = quote ? `
-QUOTED LINE ITEMS (use these as basis for invoice - REUSE the quote item IDs):
+QUOTED LINE ITEMS (MUST preserve exact quantities and unit prices from the quote):
 ${quote.items.map(item => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
+
+CRITICAL: Each invoice line item MUST use the SAME quantity and unit price as the quote above. Do NOT collapse quantities into 1 with a lump-sum unit price. For example, if the quote says "100 x $250.00 = $25,000.00", the invoice MUST also say quantity: 100, unitPrice: 250.00, total: 25000.00.
 ` : contract ? `
 CONTRACT SERVICES (invoice for these services):
 ${contract.services.map(service => `- ${service}`).join('\n')}
@@ -1887,7 +1889,7 @@ ${lineItemsSource}
 CRITICAL REQUIREMENTS:
 1. Use the EXACT SAME vendor information (name, domain, address, email, phone)
 2. Invoice line items MUST relate to the quoted/contracted services
-3. ${invoiceConfig ? `Follow the partial invoice instructions above for amount and labeling` : 'This invoice can be for a portion or full amount'}
+3. ${invoiceConfig ? `Follow the partial invoice instructions above for amount and labeling` : 'This invoice should cover the FULL quoted/contracted amount with the EXACT quantities and unit prices from the quote'}
 4. Include reference fields in your JSON output
 
 JSON Structure:
@@ -1910,7 +1912,7 @@ JSON Structure:
     "email": "accounts@${company.domain}"
   },
   "lineItems": [
-    { "id": "string (unique UUID v4 - reuse the quote item ID if this line item maps to a quoted item)", "description": "string (service from quote/contract with phase/progress indicator)", "quantity": number, "unitPrice": number, "total": number }
+    { "id": "string (REUSE the quote item ID)", "description": "string (EXACT description from quote)", "quantity": number (MUST match quote quantity or partial delivery quantity), "unitPrice": number (MUST match quote unit price), "total": number (quantity × unitPrice) }
   ],
   "subtotal": number,
   "taxes": [
