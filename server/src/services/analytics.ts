@@ -6,7 +6,7 @@ export interface GenerationEvent {
   companyName: string;
   companyDomain: string;
   currency: string;
-  flowType: 'standard' | 'connected' | 'quick_receipt';
+  flowType: 'standard' | 'connected' | 'quick_receipt' | 'receipt_image';
   apiService?: string;
 }
 

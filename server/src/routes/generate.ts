@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { generateAssetContent, generateAssetContentStreaming, generateQuickReceiptContent } from '../services/openai.js';
+import { generateReceiptImage, AVAILABLE_SCENES } from '../services/gemini.js';
 import { CompanyProfile, AssetType, RelatedAssetContext, InvoiceConfig } from '../types.js';
 import { trackGeneration } from '../services/analytics.js';
 import { isTestDomain, getMockAsset, getMockStatusMessages } from '../services/mockData.js';
@@ -265,5 +266,54 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
       error: error instanceof Error ? error.message : 'Failed to generate receipt' 
     })}\n\n`);
     res.end();
+  }
+});
+
+// Gemini Nano Banana receipt image generation
+interface ReceiptImageRequest {
+  prompt: string;
+  scene?: string;
+}
+
+generateRouter.post('/receipt-image', async (req: Request<{}, {}, ReceiptImageRequest>, res: Response) => {
+  try {
+    const { prompt, scene = 'restaurant_table' } = req.body;
+
+    if (!prompt || !prompt.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required',
+      });
+    }
+
+    if (scene && !AVAILABLE_SCENES.includes(scene)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid scene. Must be one of: ${AVAILABLE_SCENES.join(', ')}`,
+      });
+    }
+
+    console.log(`📸 Generating receipt image via Gemini — scene: ${scene}`);
+
+    const { imageBuffer, mimeType } = await generateReceiptImage(prompt, scene);
+
+    trackGeneration({
+      assetType: 'paper_receipt',
+      spendingCategory: '',
+      companyName: '',
+      companyDomain: '',
+      currency: 'USD',
+      flowType: 'receipt_image',
+    });
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', 'inline; filename="receipt.png"');
+    res.send(imageBuffer);
+  } catch (error) {
+    console.error('Receipt image generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to generate receipt image',
+    });
   }
 });

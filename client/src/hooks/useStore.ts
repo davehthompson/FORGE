@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { CompanyProfile, AssetType, AssetData, InvoiceData, QuoteData, ContractData } from '../types';
 
 type AppMode = 'company' | 'quick_receipt';
-type AppStep = 'home' | 'input' | 'summary' | 'category' | 'select' | 'quick_receipt' | 'editor' | 'export';
+type AppStep = 'home' | 'input' | 'summary' | 'category' | 'select' | 'quick_receipt' | 'editor' | 'export' | 'receipt_image_preview';
 
 interface AppState {
   // Mode & Navigation
@@ -26,8 +26,14 @@ interface AppState {
   // Quick receipt prompt
   quickReceiptPrompt: string;
   setQuickReceiptPrompt: (prompt: string) => void;
-  quickReceiptType: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt';
-  setQuickReceiptType: (type: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt') => void;
+  quickReceiptType: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt' | 'photo_receipt';
+  setQuickReceiptType: (type: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt' | 'photo_receipt') => void;
+
+  // Receipt image (Gemini Nano Banana)
+  receiptImageBlob: Blob | null;
+  setReceiptImageBlob: (blob: Blob | null) => void;
+  receiptImageScene: string;
+  setReceiptImageScene: (scene: string) => void;
 
   // Asset selection
   selectedAssets: AssetType[];
@@ -91,7 +97,9 @@ const initialState = {
   selectedSpendingCategory: null as string | null,
   selectedCurrency: 'USD',
   quickReceiptPrompt: '',
-  quickReceiptType: 'receipt' as 'receipt' | 'paper_receipt',
+  quickReceiptType: 'receipt' as 'receipt' | 'paper_receipt' | 'photo_receipt',
+  receiptImageBlob: null as Blob | null,
+  receiptImageScene: 'restaurant_table',
   selectedAssets: [] as AssetType[],
   invoiceCount: 2,
   matchingMode: '2way' as '2way' | '3way',
@@ -128,6 +136,10 @@ export const useStore = create<AppState>((set) => ({
   setQuickReceiptPrompt: (prompt) => set({ quickReceiptPrompt: prompt }),
 
   setQuickReceiptType: (type) => set({ quickReceiptType: type }),
+
+  setReceiptImageBlob: (blob) => set({ receiptImageBlob: blob }),
+
+  setReceiptImageScene: (scene) => set({ receiptImageScene: scene }),
 
   setSelectedAssets: (assets) => set({ selectedAssets: assets }),
 

@@ -18,11 +18,16 @@ import {
   Coffee,
   Train,
   FileText,
-  Mail
+  Mail,
+  Camera,
+  UtensilsCrossed,
+  Wine,
+  Laptop,
+  Store
 } from 'lucide-react';
 import { Button } from '../ui';
 import { useStore } from '../../hooks/useStore';
-import { generateQuickReceipt } from '../../services/api';
+import { generateQuickReceipt, generateReceiptImage } from '../../services/api';
 import { CURRENCIES, getCurrency } from '../../utils/currencies';
 
 // Receipt style options - different formats for different use cases
@@ -31,6 +36,15 @@ const RECEIPT_STYLES = [
   { id: 'paper_receipt', label: 'Thermal', icon: Printer, description: 'POS thermal paper style' },
   { id: 'hotel_folio', label: 'Hotel Folio', icon: FileText, description: 'Hotel checkout folio' },
   { id: 'airline_receipt', label: 'Airline', icon: Mail, description: 'Airline email receipt' },
+  { id: 'photo_receipt', label: 'Photo', icon: Camera, description: 'AI-generated photo' },
+] as const;
+
+const SCENE_OPTIONS = [
+  { id: 'restaurant_table', label: 'Restaurant Table', icon: UtensilsCrossed },
+  { id: 'bar_counter', label: 'Bar Counter', icon: Wine },
+  { id: 'desk', label: 'Office Desk', icon: Laptop },
+  { id: 'counter', label: 'Checkout Counter', icon: Store },
+  { id: 'cafe_table', label: 'Cafe Table', icon: Coffee },
 ] as const;
 
 // Map categories to recommended receipt types
@@ -188,13 +202,17 @@ export function QuickReceiptPrompt() {
     setIsLoading,
     isLoading,
     setError,
-    error
+    error,
+    receiptImageScene,
+    setReceiptImageScene,
+    setReceiptImageBlob,
   } = useStore();
 
   const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const currentCurrency = getCurrency(selectedCurrency) || CURRENCIES[0];
+  const isPhotoMode = quickReceiptType === 'photo_receipt';
 
   const handleGenerate = async () => {
     if (!quickReceiptPrompt.trim()) {
@@ -204,24 +222,39 @@ export function QuickReceiptPrompt() {
 
     setIsLoading(true);
     setError(null);
+
+    if (isPhotoMode) {
+      setGenerationStatus('Generating photorealistic receipt image...');
+      try {
+        const blob = await generateReceiptImage(quickReceiptPrompt, receiptImageScene);
+        setReceiptImageBlob(blob);
+        setStep('receipt_image_preview');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to generate receipt image');
+      } finally {
+        setIsLoading(false);
+        setGenerationStatus(null);
+      }
+      return;
+    }
+
     setGenerationStatus('Analyzing your description...');
 
     try {
-      // Include category hint in the prompt for better generation
       const enhancedPrompt = selectedCategory 
         ? `[Category: ${selectedCategory}] ${quickReceiptPrompt}`
         : quickReceiptPrompt;
 
       const receiptData = await generateQuickReceipt(
         enhancedPrompt,
-        quickReceiptType,
+        quickReceiptType as 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt',
         selectedCurrency,
         (status) => setGenerationStatus(status)
       );
 
-      setGeneratedAsset(quickReceiptType, receiptData);
-      setCurrentAsset(quickReceiptType);
-      setSelectedAssets([quickReceiptType]);
+      setGeneratedAsset(quickReceiptType as any, receiptData);
+      setCurrentAsset(quickReceiptType as any);
+      setSelectedAssets([quickReceiptType as any]);
       setStep('editor');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate receipt');
@@ -340,47 +373,81 @@ export function QuickReceiptPrompt() {
               </div>
             </div>
 
-            <div className="w-44">
+            {!isPhotoMode && (
+              <div className="w-44">
+                <label className="block text-xs font-medium text-ramp-sage mb-1.5 uppercase tracking-wide">
+                  Currency
+                </label>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
+                    disabled={isLoading}
+                    className="w-full py-2 px-3 rounded-lg border border-ramp-stone hover:border-ramp-gray-400 bg-white text-left transition-all flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{currentCurrency.flag}</span>
+                      <span className="font-medium text-ramp-slate text-sm">{currentCurrency.code}</span>
+                      <span className="text-ramp-sage text-xs">{currentCurrency.symbol}</span>
+                    </div>
+                    <ChevronDown className={`w-3.5 h-3.5 text-ramp-sage transition-transform ${showCurrencyDropdown ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {showCurrencyDropdown && (
+                    <div className="absolute z-20 w-full mt-1 bg-white rounded-lg border border-ramp-stone shadow-lg max-h-48 overflow-y-auto">
+                      {CURRENCIES.map((currency) => (
+                        <button
+                          key={currency.code}
+                          onClick={() => {
+                            setSelectedCurrency(currency.code);
+                            setShowCurrencyDropdown(false);
+                          }}
+                          className={`w-full p-2 text-left hover:bg-ramp-sand transition-colors flex items-center gap-2 text-sm ${
+                            selectedCurrency === currency.code ? 'bg-ramp-sand' : ''
+                          }`}
+                        >
+                          <span>{currency.flag}</span>
+                          <span className="font-medium text-ramp-slate">{currency.code}</span>
+                          <span className="text-ramp-sage text-xs">{currency.symbol}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Scene selector for Photo mode */}
+          {isPhotoMode && (
+            <div>
               <label className="block text-xs font-medium text-ramp-sage mb-1.5 uppercase tracking-wide">
-                Currency
+                Scene
               </label>
-              <div className="relative">
-                <button
-                  onClick={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
-                  disabled={isLoading}
-                  className="w-full py-2 px-3 rounded-lg border border-ramp-stone hover:border-ramp-gray-400 bg-white text-left transition-all flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{currentCurrency.flag}</span>
-                    <span className="font-medium text-ramp-slate text-sm">{currentCurrency.code}</span>
-                    <span className="text-ramp-sage text-xs">{currentCurrency.symbol}</span>
-                  </div>
-                  <ChevronDown className={`w-3.5 h-3.5 text-ramp-sage transition-transform ${showCurrencyDropdown ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {showCurrencyDropdown && (
-                  <div className="absolute z-20 w-full mt-1 bg-white rounded-lg border border-ramp-stone shadow-lg max-h-48 overflow-y-auto">
-                    {CURRENCIES.map((currency) => (
-                      <button
-                        key={currency.code}
-                        onClick={() => {
-                          setSelectedCurrency(currency.code);
-                          setShowCurrencyDropdown(false);
-                        }}
-                        className={`w-full p-2 text-left hover:bg-ramp-sand transition-colors flex items-center gap-2 text-sm ${
-                          selectedCurrency === currency.code ? 'bg-ramp-sand' : ''
-                        }`}
-                      >
-                        <span>{currency.flag}</span>
-                        <span className="font-medium text-ramp-slate">{currency.code}</span>
-                        <span className="text-ramp-sage text-xs">{currency.symbol}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="flex gap-1.5">
+                {SCENE_OPTIONS.map((scene) => {
+                  const Icon = scene.icon;
+                  const isSelected = receiptImageScene === scene.id;
+                  return (
+                    <button
+                      key={scene.id}
+                      onClick={() => setReceiptImageScene(scene.id)}
+                      disabled={isLoading}
+                      className={`flex-1 py-2 px-2 rounded-lg border text-center transition-all ${
+                        isSelected
+                          ? 'border-ramp-slate bg-ramp-sand'
+                          : 'border-ramp-stone hover:border-ramp-gray-400 bg-white'
+                      }`}
+                    >
+                      <Icon className={`w-4 h-4 mx-auto mb-0.5 ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-500'}`} />
+                      <p className={`text-xs font-medium ${isSelected ? 'text-ramp-slate' : 'text-ramp-gray-600'}`}>
+                        {scene.label}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-          </div>
+          )}
 
           {/* Example prompts for selected category */}
           {selectedCategoryData && (

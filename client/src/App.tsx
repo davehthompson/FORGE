@@ -7,6 +7,7 @@ import { CompanySummary } from './components/CompanySummary';
 import { CategorySelector } from './components/CategorySelector';
 import { AssetSelector } from './components/AssetSelector';
 import { QuickReceiptPrompt } from './components/QuickReceipt';
+import { ReceiptImagePreview } from './components/QuickReceipt/ReceiptImagePreview';
 import { Editor } from './components/Editor';
 import { Export } from './components/Export';
 import { Analytics } from './components/Analytics/Analytics';
@@ -31,7 +32,7 @@ function App() {
   }, [toggleAnalytics]);
 
   // Editor and Export have their own headers
-  const showHeader = step !== 'editor' && step !== 'export';
+  const showHeader = step !== 'editor' && step !== 'export' && step !== 'receipt_image_preview';
 
   const renderStep = () => {
     switch (step) {
@@ -47,6 +48,8 @@ function App() {
         return <AssetSelector />;
       case 'quick_receipt':
         return <QuickReceiptPrompt />;
+      case 'receipt_image_preview':
+        return <ReceiptImagePreview />;
       case 'editor':
         return <Editor />;
       case 'export':

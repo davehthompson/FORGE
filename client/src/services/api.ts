@@ -557,6 +557,25 @@ export function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// Gemini receipt image generation (Nano Banana)
+export async function generateReceiptImage(
+  prompt: string,
+  scene: string = 'restaurant_table'
+): Promise<Blob> {
+  const response = await fetch('/api/generate/receipt-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, scene }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Failed to generate receipt image');
+  }
+
+  return response.blob();
+}
+
 // Quick receipt generation from prompt
 export async function generateQuickReceipt(
   prompt: string,

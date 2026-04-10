@@ -10,6 +10,7 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
+    "@google/genai": "^1.49.0",
     "@neondatabase/serverless": "^1.0.2",
     "@sparticuz/chromium-min": "^141.0.0",
     "@types/cors": "^2.8.17",
