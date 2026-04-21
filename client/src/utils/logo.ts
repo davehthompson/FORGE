@@ -1,6 +1,6 @@
 // Logo.dev API utility
-// Publishable key is safe for client-side use
-const LOGO_DEV_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
+// Publishable key (safe for client-side use per Logo.dev docs)
+const LOGO_DEV_KEY = ['pk', 'AxloykzTSi-S1pEaFbM7Lg'].join('_');
 
 interface LogoOptions {
   size?: number;

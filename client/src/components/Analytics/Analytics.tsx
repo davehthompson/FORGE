@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Building2, Tag, FileText, Loader2, Globe } from 'lucide-react';
+import { X, BarChart3, Building2, Tag, FileText, Loader2, Globe, Users } from 'lucide-react';
 
 interface AnalyticsSummary {
   total: number;
@@ -17,6 +17,12 @@ interface CompanyEntry {
 interface TimelineEntry {
   date: string;
   count: number;
+}
+
+interface UserEntry {
+  email: string;
+  count: number;
+  lastActive: string;
 }
 
 const ASSET_LABELS: Record<string, string> = {
@@ -38,6 +44,7 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [companies, setCompanies] = useState<CompanyEntry[]>([]);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [users, setUsers] = useState<UserEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,19 +52,22 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
     setLoading(true);
     setError(null);
     try {
-      const [summaryRes, companiesRes, timelineRes] = await Promise.all([
+      const [summaryRes, companiesRes, timelineRes, usersRes] = await Promise.all([
         fetch('/api/analytics/summary'),
         fetch('/api/analytics/companies'),
         fetch('/api/analytics/timeline?days=30'),
+        fetch('/api/analytics/users'),
       ]);
 
       const summaryData = await summaryRes.json();
       const companiesData = await companiesRes.json();
       const timelineData = await timelineRes.json();
+      const usersData = await usersRes.json();
 
       if (summaryData.success) setSummary(summaryData.data);
       if (companiesData.success) setCompanies(companiesData.data);
       if (timelineData.success) setTimeline(timelineData.data);
+      if (usersData.success) setUsers(usersData.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load analytics');
     } finally {
@@ -279,6 +289,50 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
                               <td className="px-4 py-2.5 text-ramp-slate font-medium text-right">{c.count}</td>
                               <td className="px-4 py-2.5 text-ramp-gray-500 text-right">
                                 {new Date(c.lastUsed).toLocaleDateString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-ramp-gray-400">No data yet</p>
+                  )}
+                </div>
+
+                {/* By User */}
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Users className="w-4 h-4 text-ramp-gray-600" />
+                    <h2 className="text-sm font-semibold text-ramp-slate uppercase tracking-wide">
+                      By User
+                    </h2>
+                    {users.length > 0 && (
+                      <span className="text-xs text-ramp-gray-400 ml-auto">
+                        {users.length} users
+                      </span>
+                    )}
+                  </div>
+                  {users.length ? (
+                    <div className="border border-ramp-stone rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-ramp-sand text-left">
+                            <th className="px-4 py-2.5 font-medium text-ramp-gray-600">Email</th>
+                            <th className="px-4 py-2.5 font-medium text-ramp-gray-600 text-right">Assets Generated</th>
+                            <th className="px-4 py-2.5 font-medium text-ramp-gray-600 text-right">Last Active</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {users.map((u, i) => (
+                            <tr
+                              key={`${u.email}-${i}`}
+                              className="border-t border-ramp-stone"
+                            >
+                              <td className="px-4 py-2.5 text-ramp-slate font-medium">{u.email}</td>
+                              <td className="px-4 py-2.5 text-ramp-slate font-medium text-right">{u.count}</td>
+                              <td className="px-4 py-2.5 text-ramp-gray-500 text-right">
+                                {new Date(u.lastActive).toLocaleDateString()}
                               </td>
                             </tr>
                           ))}

@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../types.js';
 
 // Logo API key for logo.dev
-const LOGO_API_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
+const LOGO_API_KEY = process.env.LOGO_DEV_KEY || 'pk_AxloykzTSi-S1pEaFbM7Lg';
 
 // Metadata constants for AI-generated content
 const AI_METADATA = {
@@ -57,12 +57,14 @@ const CURRENCY_INFO: Record<string, { symbol: string; locale: string }> = {
 };
 
 function getLogoUrl(domain: string, size: number = 64): string {
-  return `https://img.logo.dev/${domain}?token=${LOGO_API_KEY}&size=${size}&format=png`;
+  const url = `https://img.logo.dev/${domain}?token=${LOGO_API_KEY}&size=${size}&format=png`;
+  console.log(`[PDF] getLogoUrl called for domain="${domain}" → ${url}`);
+  return url;
 }
 
 const CHROMIUM_PACK_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/chromium-pack.tar`
-  : 'https://github.com/Sparticuz/chromium/releases/download/v141.0.0/chromium-v141.0.0-pack.tar';
+  : 'https://github.com/Sparticuz/chromium/releases/download/v141.0.0/chromium-v141.0.0-pack.x64.tar';
 
 let cachedExecutablePath: string | null = null;
 let downloadPromise: Promise<string> | null = null;
@@ -87,18 +89,18 @@ async function getChromiumPath(): Promise<string> {
 }
 
 async function launchBrowser() {
-  const isLocal = !process.env.VERCEL;
-
-  if (isLocal) {
+  // Use CHROME_PATH env var if set (local dev or ECS with pre-installed Chromium)
+  const chromePath = process.env.CHROME_PATH;
+  if (chromePath) {
     return puppeteer.launch({
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      executablePath: chromePath,
       headless: true,
     });
   }
 
+  // Fallback: download chromium pack (serverless/ECS environments)
   const executablePath = await getChromiumPath();
-
   return puppeteer.launch({
     args: chromium.args,
     executablePath,
@@ -108,11 +110,40 @@ async function launchBrowser() {
 
 export async function generatePdf(type: AssetType, data: AssetData, currency: string = 'USD', primaryColor?: string): Promise<Buffer> {
   const html = generateHtml(type, data, currency, primaryColor);
-  
+
+  console.log(`[PDF] Generating ${type} PDF...`);
+  console.log(`[PDF] LOGO_API_KEY present: ${!!LOGO_API_KEY}, key prefix: ${LOGO_API_KEY?.substring(0, 6)}...`);
+
   const browser = await launchBrowser();
-  
+
   try {
     const page = await browser.newPage();
+
+    // Log all network requests/responses for logo URLs
+    page.on('request', (req) => {
+      const url = req.url();
+      if (url.includes('logo.dev')) {
+        console.log(`[PDF][Logo] Request: ${url}`);
+      }
+    });
+    page.on('response', (res) => {
+      const url = res.url();
+      if (url.includes('logo.dev')) {
+        console.log(`[PDF][Logo] Response: ${res.status()} ${res.statusText()} - ${url}`);
+      }
+    });
+    page.on('requestfailed', (req) => {
+      const url = req.url();
+      if (url.includes('logo.dev')) {
+        console.log(`[PDF][Logo] FAILED: ${req.failure()?.errorText} - ${url}`);
+      }
+    });
+    page.on('console', (msg) => {
+      if (msg.text().toLowerCase().includes('logo') || msg.type() === 'error') {
+        console.log(`[PDF][Console] ${msg.type()}: ${msg.text()}`);
+      }
+    });
+
     await page.setContent(html, { waitUntil: 'networkidle0' });
     
     const pdfBytes = await page.pdf({

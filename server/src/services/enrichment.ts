@@ -100,7 +100,7 @@ export async function enrichCompanyFromDomain(domain: string): Promise<CompanyPr
 }
 
 // Logo.dev API utility
-const LOGO_DEV_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
+const LOGO_DEV_KEY = process.env.LOGO_DEV_KEY || 'pk_AxloykzTSi-S1pEaFbM7Lg';
 
 function getLogoUrl(domain: string, size: number = 128): string {
   const cleanDomain = domain
@@ -116,7 +116,9 @@ function getLogoUrl(domain: string, size: number = 128): string {
     fallback: 'monogram',
   });
 
-  return `https://img.logo.dev/${cleanDomain}?${params.toString()}`;
+  const url = `https://img.logo.dev/${cleanDomain}?${params.toString()}`;
+  console.log(`[Enrichment] Logo URL for "${domain}": ${url}`);
+  return url;
 }
 
 interface PDLCompanyResponse {

@@ -15,34 +15,43 @@ interface GenerateRequest {
   invoiceConfig?: InvoiceConfig;
   currency?: string;
   lineItemCount?: number;
+  userEmail?: string;
+}
+
+function extractUserEmail(req: Request): string {
+  return (req.headers['x-forwarded-email'] as string)
+    || (req.headers['x-user-email'] as string)
+    || req.body.userEmail
+    || '';
 }
 
 // Standard non-streaming endpoint
 generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
     const { type, company, spendingCategory, currency = 'USD', lineItemCount } = req.body;
-    
+    const userEmail = extractUserEmail(req);
+
     if (!type) {
       return res.status(400).json({
         success: false,
         error: 'Asset type is required',
       });
     }
-    
+
     if (!company) {
       return res.status(400).json({
         success: false,
         error: 'Company profile is required',
       });
     }
-    
+
     if (!spendingCategory) {
       return res.status(400).json({
         success: false,
         error: 'Spending category is required',
       });
     }
-    
+
     const validTypes: AssetType[] = ['invoice', 'receipt', 'paper_receipt', 'quote', 'contract'];
     if (!validTypes.includes(type)) {
       return res.status(400).json({
@@ -54,12 +63,12 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
     if (isTestDomain(company.domain || '')) {
       console.log(`🧪 Test mode — returning mock ${type}`);
       const mockData = getMockAsset(type);
-      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: 'standard' });
+      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: 'standard', userEmail });
       return res.json({ success: true, data: mockData });
     }
-    
+
     const assetData = await generateAssetContent(type, company, spendingCategory, currency, lineItemCount);
-    
+
     trackGeneration({
       assetType: type,
       spendingCategory,
@@ -67,6 +76,7 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
       companyDomain: company.domain,
       currency,
       flowType: 'standard',
+      userEmail,
     });
 
     res.json({
@@ -86,7 +96,8 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
 generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
     const { type, company, spendingCategory, relatedAssets, invoiceConfig, currency = 'USD', lineItemCount } = req.body;
-    
+    const userEmail = extractUserEmail(req);
+
     // Validate inputs
     if (!type) {
       return res.status(400).json({
@@ -94,21 +105,21 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
         error: 'Asset type is required',
       });
     }
-    
+
     if (!company) {
       return res.status(400).json({
         success: false,
         error: 'Company profile is required',
       });
     }
-    
+
     if (!spendingCategory) {
       return res.status(400).json({
         success: false,
         error: 'Spending category is required',
       });
     }
-    
+
     const validTypes: AssetType[] = ['invoice', 'receipt', 'paper_receipt', 'quote', 'contract'];
     if (!validTypes.includes(type)) {
       return res.status(400).json({
@@ -139,7 +150,7 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       }
       const mockData = getMockAsset(type, invoiceConfig, relatedAssets);
       sendEvent('complete', { success: true, data: mockData });
-      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard' });
+      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard', userEmail });
       return res.end();
     }
 
@@ -167,13 +178,14 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       companyDomain: company.domain,
       currency,
       flowType: relatedAssets ? 'connected' : 'standard',
+      userEmail,
     });
-    
+
     // Close the connection
     res.end();
   } catch (error) {
     console.error('Streaming generation error:', error);
-    
+
     // If headers haven't been sent, send JSON error
     if (!res.headersSent) {
       return res.status(500).json({
@@ -181,11 +193,11 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
         error: error instanceof Error ? error.message : 'Failed to generate asset',
       });
     }
-    
+
     // Otherwise send SSE error event
     res.write(`event: error\n`);
-    res.write(`data: ${JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Failed to generate asset' 
+    res.write(`data: ${JSON.stringify({
+      error: error instanceof Error ? error.message : 'Failed to generate asset'
     })}\n\n`);
     res.end();
   }
@@ -196,19 +208,21 @@ interface QuickReceiptRequest {
   prompt: string;
   receiptType: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt';
   currency?: string;
+  userEmail?: string;
 }
 
 generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRequest>, res: Response) => {
   try {
     const { prompt, receiptType, currency = 'USD' } = req.body;
-    
+    const userEmail = extractUserEmail(req);
+
     if (!prompt || !prompt.trim()) {
       return res.status(400).json({
         success: false,
         error: 'Prompt is required',
       });
     }
-    
+
     const validReceiptTypes = ['receipt', 'paper_receipt', 'hotel_folio', 'airline_receipt'];
     if (!receiptType || !validReceiptTypes.includes(receiptType)) {
       return res.status(400).json({
@@ -248,22 +262,23 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
       companyDomain: '',
       currency,
       flowType: 'quick_receipt',
+      userEmail,
     });
 
     res.end();
   } catch (error) {
     console.error('Quick receipt generation error:', error);
-    
+
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to generate receipt',
       });
     }
-    
+
     res.write(`event: error\n`);
-    res.write(`data: ${JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Failed to generate receipt' 
+    res.write(`data: ${JSON.stringify({
+      error: error instanceof Error ? error.message : 'Failed to generate receipt'
     })}\n\n`);
     res.end();
   }
@@ -273,11 +288,13 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
 interface ReceiptImageRequest {
   prompt: string;
   scene?: string;
+  userEmail?: string;
 }
 
 generateRouter.post('/receipt-image', async (req: Request<{}, {}, ReceiptImageRequest>, res: Response) => {
   try {
     const { prompt, scene = 'restaurant_table' } = req.body;
+    const userEmail = extractUserEmail(req);
 
     if (!prompt || !prompt.trim()) {
       return res.status(400).json({
@@ -304,6 +321,7 @@ generateRouter.post('/receipt-image', async (req: Request<{}, {}, ReceiptImageRe
       companyDomain: '',
       currency: 'USD',
       flowType: 'receipt_image',
+      userEmail,
     });
 
     res.setHeader('Content-Type', mimeType);

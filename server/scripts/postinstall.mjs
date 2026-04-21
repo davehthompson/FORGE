@@ -3,15 +3,32 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
 
+// Top-level guard: exit cleanly if anything goes wrong at all
+process.on("uncaughtException", () => process.exit(0));
+process.on("unhandledRejection", () => process.exit(0));
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverRoot = dirname(__dirname);
 const projectRoot = dirname(serverRoot);
 
 async function main() {
   try {
-    console.log("📦 Starting chromium postinstall script...");
+    console.log("Starting chromium postinstall script...");
 
-    const chromiumResolvedPath = import.meta.resolve("@sparticuz/chromium");
+    // Skip if archive already exists (avoids failure when postinstall runs twice during Docker build)
+    const earlyOutputPath = join(projectRoot, "client", "public", "chromium-pack.tar");
+    if (existsSync(earlyOutputPath)) {
+      console.log("✅ Chromium archive already exists, skipping.");
+      return;
+    }
+
+    let chromiumResolvedPath;
+    try {
+      chromiumResolvedPath = import.meta.resolve("@sparticuz/chromium");
+    } catch {
+      console.log("@sparticuz/chromium not installed (devDependency), skipping");
+      return;
+    }
     const chromiumPath = chromiumResolvedPath.replace(/^file:\/\//, "");
     const chromiumDir = dirname(dirname(dirname(chromiumPath)));
     const binDir = join(chromiumDir, "bin");

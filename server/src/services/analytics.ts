@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { Pool } from 'pg';
 
 export interface GenerationEvent {
   assetType: string;
@@ -8,59 +8,49 @@ export interface GenerationEvent {
   currency: string;
   flowType: 'standard' | 'connected' | 'quick_receipt' | 'receipt_image';
   apiService?: string;
+  userEmail?: string;
 }
 
-let sql: ReturnType<typeof neon> | null = null;
+let pool: Pool | null = null;
 let tableReady = false;
 
-function getClient() {
-  if (!sql) {
-    const url = process.env.DATABASE_URL;
+function getPool(): Pool | null {
+  if (!pool) {
+    const url = process.env.DATABASE_URL || process.env.FORGE_DATABASE_URL;
     if (!url) return null;
-    sql = neon(url);
+    pool = new Pool({
+      connectionString: url,
+      ssl: url.includes('sslmode=disable') ? false : { rejectUnauthorized: false },
+    });
   }
-  return sql;
+  return pool;
 }
 
 async function ensureTable() {
   if (tableReady) return;
-  const client = getClient();
-  if (!client) return;
+  const db = getPool();
+  if (!db) return;
 
   try {
-    await client`
-      CREATE TABLE IF NOT EXISTS generation_events (
-        id SERIAL PRIMARY KEY,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        asset_type TEXT NOT NULL,
-        spending_category TEXT NOT NULL DEFAULT '',
-        company_name TEXT NOT NULL DEFAULT '',
-        company_domain TEXT NOT NULL DEFAULT '',
-        currency TEXT NOT NULL DEFAULT 'USD',
-        flow_type TEXT NOT NULL DEFAULT 'standard',
-        api_service TEXT NOT NULL DEFAULT ''
-      )
-    `;
-    await client`
-      ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS api_service TEXT NOT NULL DEFAULT ''
-    `;
+    await db.query('SELECT 1 FROM generation_events LIMIT 0');
     tableReady = true;
-  } catch (err) {
-    console.error('Analytics: failed to create table', err);
+  } catch {
+    console.error('Analytics: generation_events table not found — run migrations');
   }
 }
 
 export function trackGeneration(event: GenerationEvent): void {
-  const client = getClient();
-  if (!client) return;
+  const db = getPool();
+  if (!db) return;
 
   ensureTable()
     .then(() => {
-      if (!client) return;
-      return client`
-        INSERT INTO generation_events (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service)
-        VALUES (${event.assetType}, ${event.spendingCategory}, ${event.companyName}, ${event.companyDomain}, ${event.currency}, ${event.flowType}, ${event.apiService ?? ''})
-      `;
+      if (!db) return;
+      return db.query(
+        `INSERT INTO generation_events (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service, user_email)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [event.assetType, event.spendingCategory, event.companyName, event.companyDomain, event.currency, event.flowType, event.apiService ?? '', event.userEmail ?? '']
+      );
     })
     .catch((err) => {
       console.error('Analytics: tracking failed', err);
@@ -68,24 +58,24 @@ export function trackGeneration(event: GenerationEvent): void {
 }
 
 export async function getAnalyticsSummary() {
-  const client = getClient();
-  if (!client) return { total: 0, byType: [] as { type: string; count: number }[], byCategory: [] as { category: string; count: number }[] };
+  const db = getPool();
+  if (!db) return { total: 0, byType: [] as { type: string; count: number }[], byCategory: [] as { category: string; count: number }[] };
 
   await ensureTable();
 
-  const totalRows = await client`SELECT COUNT(*)::int AS total FROM generation_events`;
-  const typeRows = await client`SELECT asset_type, COUNT(*)::int AS count FROM generation_events GROUP BY asset_type ORDER BY count DESC`;
-  const categoryRows = await client`SELECT spending_category, COUNT(*)::int AS count FROM generation_events WHERE spending_category != '' GROUP BY spending_category ORDER BY count DESC`;
+  const totalRes = await db.query('SELECT COUNT(*)::int AS total FROM generation_events');
+  const typeRes = await db.query('SELECT asset_type, COUNT(*)::int AS count FROM generation_events GROUP BY asset_type ORDER BY count DESC');
+  const categoryRes = await db.query("SELECT spending_category, COUNT(*)::int AS count FROM generation_events WHERE spending_category != '' GROUP BY spending_category ORDER BY count DESC");
 
-  const total = (totalRows as Record<string, unknown>[])[0]?.total as number ?? 0;
+  const total = totalRes.rows[0]?.total ?? 0;
 
   return {
     total,
-    byType: (typeRows as Record<string, unknown>[]).map((r) => ({
+    byType: typeRes.rows.map((r: Record<string, unknown>) => ({
       type: r.asset_type as string,
       count: r.count as number,
     })),
-    byCategory: (categoryRows as Record<string, unknown>[]).map((r) => ({
+    byCategory: categoryRes.rows.map((r: Record<string, unknown>) => ({
       category: r.spending_category as string,
       count: r.count as number,
     })),
@@ -93,20 +83,20 @@ export async function getAnalyticsSummary() {
 }
 
 export async function getAnalyticsCompanies() {
-  const client = getClient();
-  if (!client) return [];
+  const db = getPool();
+  if (!db) return [];
 
   await ensureTable();
 
-  const rows = await client`
+  const res = await db.query(`
     SELECT company_name, company_domain, COUNT(*)::int AS count, MAX(created_at)::text AS last_used
     FROM generation_events
     WHERE company_name != ''
     GROUP BY company_name, company_domain
     ORDER BY count DESC
-  `;
+  `);
 
-  return (rows as Record<string, unknown>[]).map((r) => ({
+  return res.rows.map((r: Record<string, unknown>) => ({
     name: r.company_name as string,
     domain: r.company_domain as string,
     count: r.count as number,
@@ -115,29 +105,51 @@ export async function getAnalyticsCompanies() {
 }
 
 export async function getAnalyticsTimeline(days: number = 30) {
-  const client = getClient();
-  if (!client) return [];
+  const db = getPool();
+  if (!db) return [];
 
   await ensureTable();
 
-  const rows = await client`
-    SELECT d::date::text AS date, COALESCE(e.count, 0)::int AS count
-    FROM generate_series(
-      CURRENT_DATE - ${days} + 1,
-      CURRENT_DATE,
-      '1 day'::interval
-    ) AS d
-    LEFT JOIN (
-      SELECT DATE(created_at) AS event_date, COUNT(*)::int AS count
-      FROM generation_events
-      WHERE created_at >= CURRENT_DATE - ${days} + 1
-      GROUP BY DATE(created_at)
-    ) e ON e.event_date = d::date
-    ORDER BY date ASC
-  `;
+  const res = await db.query(
+    `SELECT d::date::text AS date, COALESCE(e.count, 0)::int AS count
+     FROM generate_series(
+       CURRENT_DATE - make_interval(days => $1) + interval '1 day',
+       CURRENT_DATE,
+       '1 day'::interval
+     ) AS d
+     LEFT JOIN (
+       SELECT DATE(created_at) AS event_date, COUNT(*)::int AS count
+       FROM generation_events
+       WHERE created_at >= CURRENT_DATE - make_interval(days => $1) + interval '1 day'
+       GROUP BY DATE(created_at)
+     ) e ON e.event_date = d::date
+     ORDER BY date ASC`,
+    [days]
+  );
 
-  return (rows as Record<string, unknown>[]).map((r) => ({
+  return res.rows.map((r: Record<string, unknown>) => ({
     date: r.date as string,
     count: r.count as number,
+  }));
+}
+
+export async function getAnalyticsByUser() {
+  const db = getPool();
+  if (!db) return [];
+
+  await ensureTable();
+
+  const res = await db.query(`
+    SELECT user_email, COUNT(*)::int AS count, MAX(created_at)::text AS last_active
+    FROM generation_events
+    WHERE user_email != ''
+    GROUP BY user_email
+    ORDER BY count DESC
+  `);
+
+  return res.rows.map((r: Record<string, unknown>) => ({
+    email: r.user_email as string,
+    count: r.count as number,
+    lastActive: r.last_active as string,
   }));
 }

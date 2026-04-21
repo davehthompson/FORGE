@@ -55,6 +55,7 @@ export async function generateAssetStreaming(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+
     },
     body: JSON.stringify({ type, company, spendingCategory, relatedAssets, currency, lineItemCount }),
   });
@@ -367,7 +368,7 @@ export async function generateConnectedAssetsStreaming(
           
           const response = await fetch('/api/generate/stream', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json',  },
             body: JSON.stringify({
               type: 'invoice',
               company,
@@ -564,7 +565,7 @@ export async function generateReceiptImage(
 ): Promise<Blob> {
   const response = await fetch('/api/generate/receipt-image', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json',  },
     body: JSON.stringify({ prompt, scene }),
   });
 
@@ -587,6 +588,7 @@ export async function generateQuickReceipt(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+
     },
     body: JSON.stringify({ prompt, receiptType, currency }),
   });

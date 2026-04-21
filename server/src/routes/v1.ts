@@ -59,6 +59,7 @@ function collectErrors(errors: (string | null)[]): string[] {
 v1Router.post('/generate', async (req: Request, res: Response) => {
   try {
     const { type, domain, spendingCategory, currency = 'USD', format = 'pdf', lineItemCount } = req.body;
+    const userEmail = (req.headers['x-forwarded-email'] as string) || (req.headers['x-user-email'] as string) || req.body.userEmail || '';
 
     const errors = collectErrors([
       validateEnum(type, GENERATE_TYPES, 'type'),
@@ -106,6 +107,7 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
       currency,
       flowType: 'standard',
       apiService: req.serviceName,
+      userEmail,
     });
   } catch (error) {
     console.error('[v1/generate] error:', error);
@@ -131,6 +133,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
       format = 'pdf',
       lineItemCount,
     } = req.body;
+    const userEmail = (req.headers['x-forwarded-email'] as string) || (req.headers['x-user-email'] as string) || req.body.userEmail || '';
 
     // --- validation ---
     const errors: string[] = [];
@@ -200,6 +203,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         currency,
         flowType: 'connected',
         apiService: req.serviceName,
+        userEmail,
       });
     }
 
@@ -228,6 +232,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         currency,
         flowType: 'connected',
         apiService: req.serviceName,
+        userEmail,
       });
     }
 
@@ -287,6 +292,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         currency,
         flowType: 'connected',
         apiService: req.serviceName,
+        userEmail,
       });
     }
 
@@ -324,6 +330,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
 v1Router.post('/receipt', async (req: Request, res: Response) => {
   try {
     const { prompt, receiptType, currency = 'USD', format = 'pdf' } = req.body;
+    const userEmail = (req.headers['x-forwarded-email'] as string) || (req.headers['x-user-email'] as string) || req.body.userEmail || '';
 
     const errors = collectErrors([
       validateEnum(receiptType, RECEIPT_TYPES, 'receiptType'),
@@ -357,6 +364,7 @@ v1Router.post('/receipt', async (req: Request, res: Response) => {
       currency,
       flowType: 'quick_receipt',
       apiService: req.serviceName,
+      userEmail,
     });
   } catch (error) {
     console.error('[v1/receipt] error:', error);

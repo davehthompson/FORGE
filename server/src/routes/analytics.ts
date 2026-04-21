@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getAnalyticsSummary, getAnalyticsCompanies, getAnalyticsTimeline } from '../services/analytics.js';
+import { getAnalyticsSummary, getAnalyticsCompanies, getAnalyticsTimeline, getAnalyticsByUser } from '../services/analytics.js';
 
 export const analyticsRouter = Router();
 
@@ -25,6 +25,19 @@ analyticsRouter.get('/companies', async (_req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch company analytics',
+    });
+  }
+});
+
+analyticsRouter.get('/users', async (_req: Request, res: Response) => {
+  try {
+    const users = await getAnalyticsByUser();
+    res.json({ success: true, data: users });
+  } catch (error) {
+    console.error('Analytics users error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch user analytics',
     });
   }
 });
