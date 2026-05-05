@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { 
-  FileText, 
-  FileSpreadsheet, 
-  FileSignature, 
-  ArrowRight, 
+import {
+  FileText,
+  FileSpreadsheet,
+  FileSignature,
+  ArrowRight,
   ArrowLeft,
+  AlertTriangle,
   CheckCircle2,
   Sparkles,
   DollarSign,
@@ -52,19 +53,20 @@ const ASSET_OPTIONS: AssetOption[] = [
 ];
 
 export function AssetSelector() {
-  const { 
-    company, 
+  const {
+    company,
     selectedSpendingCategory,
     selectedCurrency,
-    selectedAssets, 
-    toggleAsset, 
-    selectAllAssets, 
+    selectedAssets,
+    toggleAsset,
+    selectAllAssets,
     clearAssets,
     setStep,
     setGeneratedAsset,
     setCurrentAsset,
     setIsLoading,
     isLoading,
+    error,
     setError,
     invoiceCount,
     setInvoiceCount,
@@ -73,7 +75,7 @@ export function AssetSelector() {
     lineItemCount,
     setLineItemCount,
     setGeneratedInvoices,
-    setCurrentInvoiceIndex
+    setCurrentInvoiceIndex,
   } = useStore();
   
   const [currentAssetType, setCurrentAssetType] = useState<AssetType | null>(null);
@@ -201,11 +203,16 @@ export function AssetSelector() {
       }
 
       // Set the first asset as current and navigate to editor
-      const orderedAssets = useConnectedFlow 
-        ? getConnectedGenerationOrder(selectedAssets) 
+      const orderedAssets = useConnectedFlow
+        ? getConnectedGenerationOrder(selectedAssets)
         : selectedAssets;
       setCurrentAsset(orderedAssets[0]);
       setCurrentInvoiceIndex(0);
+      // Clear loading on success too — without this, navigating back to
+      // /select strands the user on the spinner indefinitely.
+      setIsLoading(false);
+      setCurrentAssetType(null);
+      setCurrentStatus(null);
       setStep('editor');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate assets');
@@ -264,6 +271,13 @@ export function AssetSelector() {
           <p className="text-xs text-ramp-gray-500">
             {completedCount} of {totalAssets} assets complete
           </p>
+
+          {error && (
+            <div className="mt-6 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-left">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-600" />
+              <div className="text-sm text-red-800">{error}</div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -286,6 +300,19 @@ export function AssetSelector() {
               Choose which demo documents you want to create for {company.name}
             </p>
           </div>
+
+          {error && (
+            <div className="mb-6 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-600" />
+              <div className="flex-1 text-sm text-red-800">{error}</div>
+              <button
+                onClick={() => setError(null)}
+                className="text-xs font-medium text-red-700 hover:text-red-900"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {/* Selected Category Badge */}
           <div className="mb-6 p-4 bg-ramp-solar/20 rounded-lg border border-ramp-solar">

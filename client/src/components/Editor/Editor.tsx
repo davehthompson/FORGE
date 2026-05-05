@@ -59,9 +59,20 @@ export function Editor() {
     updateGeneratedInvoice,
     batchUpdateDocuments,
     setStep,
+    setIsLoading,
+    setError,
     mode,
     reset,
   } = useStore();
+
+  // Going back to selection should clear any leftover loading/error state.
+  // Without this, a successful generation that took the user to /editor and
+  // then back would leave the AssetSelector stuck on its loading spinner.
+  const handleBack = () => {
+    setIsLoading(false);
+    setError(null);
+    setStep(mode === 'quick_receipt' ? 'quick_receipt' : 'select');
+  };
 
   // Backfill IDs on line items that were generated before this feature
   useEffect(() => {
@@ -233,7 +244,7 @@ export function Editor() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setStep(mode === 'quick_receipt' ? 'quick_receipt' : 'select')}
+            onClick={handleBack}
           >
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back

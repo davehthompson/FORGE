@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import type { CompanyProfile, AssetType, AssetData, RelatedAssetContext, QuoteData, ContractData, InvoiceData } from '../types';
 
 const api = axios.create({
@@ -8,18 +8,75 @@ const api = axios.create({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Structured error helpers
+//
+// Every server response (and SSE error event) carries a `code` alongside the
+// human-readable `error` string. We attach that code onto the thrown Error so
+// downstream consumers (stores, components, the global Toast) can branch on
+// failure mode without parsing the message.
+// ---------------------------------------------------------------------------
+
+export interface ApiError extends Error {
+  code?: string;
+}
+
+export function createApiError(message: string, code?: string): ApiError {
+  const err = new Error(message) as ApiError;
+  if (code) err.code = code;
+  return err;
+}
+
+interface ServerErrorBody {
+  success?: boolean;
+  error?: string;
+  code?: string;
+  message?: string;
+}
+
+function errorFromAxios(err: unknown, fallbackMessage: string): ApiError {
+  if (err instanceof AxiosError) {
+    const body = err.response?.data as ServerErrorBody | undefined;
+    return createApiError(
+      body?.error || body?.message || err.message || fallbackMessage,
+      body?.code,
+    );
+  }
+  if (err instanceof Error) return createApiError(err.message || fallbackMessage);
+  return createApiError(fallbackMessage);
+}
+
+async function errorFromFetchResponse(
+  response: Response,
+  fallbackMessage: string,
+): Promise<ApiError> {
+  let body: ServerErrorBody | undefined;
+  try {
+    body = (await response.json()) as ServerErrorBody;
+  } catch {
+    // response not JSON
+  }
+  return createApiError(
+    body?.error || body?.message || `${fallbackMessage} (HTTP ${response.status})`,
+    body?.code,
+  );
+}
+
 // Company enrichment
 export async function enrichCompany(domain: string): Promise<CompanyProfile> {
-  const response = await api.post<{ success: boolean; data: CompanyProfile; error?: string }>(
-    '/enrich',
-    { domain }
-  );
-  
-  if (!response.data.success) {
-    throw new Error(response.data.error || 'Failed to enrich company data');
+  try {
+    const response = await api.post<{ success: boolean; data: CompanyProfile; error?: string; code?: string }>(
+      '/enrich',
+      { domain },
+    );
+    if (!response.data.success) {
+      throw createApiError(response.data.error || 'Failed to enrich company data', response.data.code);
+    }
+    return response.data.data;
+  } catch (err) {
+    if ((err as ApiError).code) throw err;
+    throw errorFromAxios(err, 'Failed to enrich company data');
   }
-  
-  return response.data.data;
 }
 
 // Asset generation (non-streaming)
@@ -29,16 +86,19 @@ export async function generateAsset(
   spendingCategory: string,
   currency: string = 'USD'
 ): Promise<AssetData> {
-  const response = await api.post<{ success: boolean; data: AssetData; error?: string }>(
-    '/generate',
-    { type, company, spendingCategory, currency }
-  );
-  
-  if (!response.data.success) {
-    throw new Error(response.data.error || 'Failed to generate asset');
+  try {
+    const response = await api.post<{ success: boolean; data: AssetData; error?: string; code?: string }>(
+      '/generate',
+      { type, company, spendingCategory, currency },
+    );
+    if (!response.data.success) {
+      throw createApiError(response.data.error || 'Failed to generate asset', response.data.code);
+    }
+    return response.data.data;
+  } catch (err) {
+    if ((err as ApiError).code) throw err;
+    throw errorFromAxios(err, 'Failed to generate asset');
   }
-  
-  return response.data.data;
 }
 
 // Asset generation with streaming status updates
@@ -60,13 +120,12 @@ export async function generateAssetStreaming(
   });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Failed to generate asset');
+    throw await errorFromFetchResponse(response, 'Failed to generate asset');
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error('No response body');
+    throw createApiError('No response body');
   }
 
   const decoder = new TextDecoder();
@@ -92,13 +151,13 @@ export async function generateAssetStreaming(
         const data = line.slice(6);
         try {
           const parsed = JSON.parse(data);
-          
+
           if (currentEvent === 'status' && parsed.status) {
             onStatus(parsed.status);
           } else if (currentEvent === 'complete' && parsed.success && parsed.data) {
             result = parsed.data;
           } else if (currentEvent === 'error' && parsed.error) {
-            throw new Error(parsed.error);
+            throw createApiError(parsed.error, parsed.code);
           }
         } catch (e) {
           // Ignore JSON parse errors for incomplete data
@@ -110,7 +169,7 @@ export async function generateAssetStreaming(
   }
 
   if (!result) {
-    throw new Error('No result received from streaming generation');
+    throw createApiError('No result received from streaming generation');
   }
 
   return result;
@@ -390,12 +449,11 @@ export async function generateConnectedAssetsStreaming(
           });
 
           if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to generate invoice');
+            throw await errorFromFetchResponse(response, 'Failed to generate invoice');
           }
 
           const reader = response.body?.getReader();
-          if (!reader) throw new Error('No response body');
+          if (!reader) throw createApiError('No response body');
 
           const decoder = new TextDecoder();
           let buffer = '';
@@ -404,11 +462,11 @@ export async function generateConnectedAssetsStreaming(
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
-            
+
             let currentEvent = '';
             for (const line of lines) {
               if (line.startsWith('event: ')) {
@@ -422,7 +480,7 @@ export async function generateConnectedAssetsStreaming(
                   } else if (currentEvent === 'complete' && parsed.success && parsed.data) {
                     invoiceData = parsed.data as InvoiceData;
                   } else if (currentEvent === 'error' && parsed.error) {
-                    throw new Error(parsed.error);
+                    throw createApiError(parsed.error, parsed.code);
                   }
                 } catch (e) {
                   if (e instanceof SyntaxError) continue;
@@ -432,7 +490,7 @@ export async function generateConnectedAssetsStreaming(
             }
           }
 
-          if (!invoiceData) throw new Error('No invoice data received');
+          if (!invoiceData) throw createApiError('No invoice data received');
           invoices.push(invoiceData);
           
           // Add this invoice's subtotal to the cumulative amount for the next invoice
@@ -569,8 +627,7 @@ export async function generateReceiptImage(
   });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Failed to generate receipt image');
+    throw await errorFromFetchResponse(response, 'Failed to generate receipt image');
   }
 
   return response.blob();
@@ -592,13 +649,12 @@ export async function generateQuickReceipt(
   });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Failed to generate receipt');
+    throw await errorFromFetchResponse(response, 'Failed to generate receipt');
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error('No response body');
+    throw createApiError('No response body');
   }
 
   const decoder = new TextDecoder();
@@ -607,15 +663,15 @@ export async function generateQuickReceipt(
 
   while (true) {
     const { done, value } = await reader.read();
-    
+
     if (done) break;
-    
+
     buffer += decoder.decode(value, { stream: true });
-    
+
     // Parse SSE events from buffer
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
-    
+
     let currentEvent = '';
     for (const line of lines) {
       if (line.startsWith('event: ')) {
@@ -624,13 +680,13 @@ export async function generateQuickReceipt(
         const data = line.slice(6);
         try {
           const parsed = JSON.parse(data);
-          
+
           if (currentEvent === 'status' && parsed.status) {
             onStatus(parsed.status);
           } else if (currentEvent === 'complete' && parsed.success && parsed.data) {
             result = parsed.data;
           } else if (currentEvent === 'error' && parsed.error) {
-            throw new Error(parsed.error);
+            throw createApiError(parsed.error, parsed.code);
           }
         } catch (e) {
           if (e instanceof SyntaxError) continue;
@@ -641,7 +697,7 @@ export async function generateQuickReceipt(
   }
 
   if (!result) {
-    throw new Error('No result received from generation');
+    throw createApiError('No result received from generation');
   }
 
   return result;

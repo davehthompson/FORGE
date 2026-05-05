@@ -10,6 +10,7 @@ import { exportRouter } from './routes/export.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { v1Router } from './routes/v1.js';
 import { apiKeyAuth } from './middleware/apiKey.js';
+import { formatErrorResponse } from './services/claude.js';
 
 dotenv.config();
 
@@ -52,10 +53,8 @@ if (!process.env.VERCEL) {
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Error:', err.message);
-  res.status(500).json({
-    success: false,
-    error: err.message || 'Internal server error',
-  });
+  const { status, body } = formatErrorResponse(err);
+  res.status(status).json(body);
 });
 
 export default app;

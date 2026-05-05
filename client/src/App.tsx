@@ -11,6 +11,7 @@ import { ReceiptImagePreview } from './components/QuickReceipt/ReceiptImagePrevi
 import { Editor } from './components/Editor';
 import { Export } from './components/Export';
 import { Analytics } from './components/Analytics/Analytics';
+import { Toast } from './components/Toast';
 
 function App() {
   const { step } = useStore();
@@ -63,6 +64,7 @@ function App() {
     <Layout showHeader={showHeader}>
       {renderStep()}
       <Analytics open={showAnalytics} onClose={() => setShowAnalytics(false)} />
+      <Toast />
     </Layout>
   );
 }

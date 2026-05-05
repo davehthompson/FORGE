@@ -1,12 +1,270 @@
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import crypto from 'crypto';
-import { CompanyProfile, AssetType, AssetData, RelatedAssetContext, QuoteData, ContractData, InvoiceConfig, InvoiceData, ReceiptData, PaperReceiptData, HotelFolioData, AirlineReceiptData } from '../types.js';
+import {
+  CompanyProfile,
+  AssetType,
+  AssetData,
+  RelatedAssetContext,
+  QuoteData,
+  ContractData,
+  InvoiceConfig,
+  InvoiceData,
+  ReceiptData,
+  PaperReceiptData,
+  HotelFolioData,
+  AirlineReceiptData,
+} from '../types.js';
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+const MODEL = 'claude-opus-4-7';
+const TIMEOUT_MS = 60_000;
+
+// Per-call-site token budgets. Tuned for Claude Opus 4.7's 128k output ceiling
+// but kept tight to control cost. See plan: claude_opus_4.7_migration.
+const TOKEN_BUDGETS = {
+  asset: 8000,
+  receipt: 6000,
+  enrichment: 4000,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+export type ClaudeErrorCode =
+  | 'TRUNCATED'
+  | 'PARSE_ERROR'
+  | 'API_ERROR'
+  | 'AUTH_ERROR'
+  | 'TIMEOUT';
+
+export class ClaudeError extends Error {
+  constructor(
+    public code: ClaudeErrorCode,
+    message: string,
+    public cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'ClaudeError';
+  }
+}
+
+const USER_FACING_MESSAGES: Record<ClaudeErrorCode, string> = {
+  TRUNCATED:
+    'The AI response was too long for this request. Try fewer line items or a shorter description and try again.',
+  PARSE_ERROR: 'The AI returned an unexpected format. Please try again.',
+  API_ERROR: 'AI service is temporarily unavailable. Please try again in a moment.',
+  AUTH_ERROR: 'AI service is misconfigured. Please contact support.',
+  TIMEOUT: 'AI service took too long to respond. Please try again.',
+};
+
+export function getUserFacingMessage(code: ClaudeErrorCode): string {
+  return USER_FACING_MESSAGES[code];
+}
+
+/**
+ * Map any thrown error into the standard route response shape:
+ *   { status, body: { success: false, error, code } }
+ *
+ * For ClaudeError, surfaces the per-code user message and HTTP status that
+ * makes sense for the failure mode. For unknown errors, falls back to a
+ * generic 500 + INTERNAL code so the client can always rely on `code`.
+ */
+export function formatErrorResponse(err: unknown): {
+  status: number;
+  body: { success: false; error: string; code: string };
+} {
+  if (err instanceof ClaudeError) {
+    const status =
+      err.code === 'AUTH_ERROR'
+        ? 500
+        : err.code === 'API_ERROR'
+          ? 503
+          : err.code === 'TIMEOUT'
+            ? 504
+            : err.code === 'TRUNCATED' || err.code === 'PARSE_ERROR'
+              ? 502
+              : 500;
+    return {
+      status,
+      body: { success: false, error: getUserFacingMessage(err.code), code: err.code },
+    };
+  }
+  const message = err instanceof Error ? err.message : 'Unexpected server error';
+  return {
+    status: 500,
+    body: { success: false, error: message, code: 'INTERNAL' },
+  };
+}
+
+function mapClaudeError(err: unknown): ClaudeError {
+  if (err instanceof ClaudeError) return err;
+  const e = err as {
+    status?: number;
+    name?: string;
+    code?: string;
+    message?: string;
+  };
+  if (e?.status === 401 || e?.status === 403) {
+    return new ClaudeError('AUTH_ERROR', 'Anthropic API authentication failed', err);
+  }
+  if (e?.status === 429) {
+    return new ClaudeError('API_ERROR', 'Anthropic API rate limit hit', err);
+  }
+  if (typeof e?.status === 'number' && e.status >= 500 && e.status < 600) {
+    return new ClaudeError('API_ERROR', `Anthropic API server error (${e.status})`, err);
+  }
+  if (
+    e?.name === 'AbortError' ||
+    e?.code === 'ETIMEDOUT' ||
+    (typeof e?.message === 'string' && /timeout|timed out/i.test(e.message))
+  ) {
+    return new ClaudeError('TIMEOUT', 'Request to Anthropic timed out', err);
+  }
+  return new ClaudeError('API_ERROR', e?.message || 'Anthropic API request failed', err);
+}
+
+// ---------------------------------------------------------------------------
+// Client + low-level call helpers
+// ---------------------------------------------------------------------------
+
+let cachedClient: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (cachedClient) return cachedClient;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey || apiKey === 'your_anthropic_api_key_here') {
+    throw new ClaudeError(
+      'AUTH_ERROR',
+      'ANTHROPIC_API_KEY is not configured. Please add your Anthropic API key to the environment.',
+    );
+  }
+  cachedClient = new Anthropic({ apiKey });
+  return cachedClient;
+}
+
+function extractTextFromContent(blocks: Anthropic.ContentBlock[]): string {
+  return blocks
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('');
+}
+
+function extractJSON<T = unknown>(
+  text: string,
+  pattern: RegExp = /\{[\s\S]*\}/,
+): T {
+  const match = text.match(pattern);
+  if (!match) throw new ClaudeError('PARSE_ERROR', 'No JSON found in response');
+  try {
+    return JSON.parse(match[0]) as T;
+  } catch (err) {
+    throw new ClaudeError('PARSE_ERROR', 'Failed to parse JSON from response', err);
+  }
+}
+
+interface CallOpts {
+  system: string;
+  user: string;
+  maxTokens: number;
+  temperature?: number;
+  tools?: Anthropic.Messages.ToolUnion[];
+}
+
+async function callClaude(opts: CallOpts): Promise<{
+  text: string;
+  raw: Anthropic.Message;
+}> {
+  const client = getClient();
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create(
+      {
+        model: MODEL,
+        max_tokens: opts.maxTokens,
+        temperature: opts.temperature ?? 0.7,
+        system: opts.system,
+        messages: [{ role: 'user', content: opts.user }],
+        ...(opts.tools ? { tools: opts.tools } : {}),
+      },
+      { timeout: TIMEOUT_MS },
+    );
+  } catch (err) {
+    throw mapClaudeError(err);
+  }
+
+  if (response.stop_reason === 'max_tokens') {
+    throw new ClaudeError(
+      'TRUNCATED',
+      'Response was truncated due to max_tokens limit',
+    );
+  }
+
+  return { text: extractTextFromContent(response.content), raw: response };
+}
+
+interface StreamCallOpts extends CallOpts {
+  onDelta?: (text: string) => void;
+}
+
+async function callClaudeStream(opts: StreamCallOpts): Promise<{
+  text: string;
+  stopReason: Anthropic.Message['stop_reason'];
+}> {
+  const client = getClient();
+  let text = '';
+  let stopReason: Anthropic.Message['stop_reason'] = null;
+
+  try {
+    const stream = client.messages.stream(
+      {
+        model: MODEL,
+        max_tokens: opts.maxTokens,
+        temperature: opts.temperature ?? 0.7,
+        system: opts.system,
+        messages: [{ role: 'user', content: opts.user }],
+        ...(opts.tools ? { tools: opts.tools } : {}),
+      },
+      { timeout: TIMEOUT_MS },
+    );
+
+    for await (const event of stream) {
+      if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'text_delta'
+      ) {
+        const chunk = event.delta.text;
+        text += chunk;
+        opts.onDelta?.(chunk);
+      } else if (event.type === 'message_delta' && event.delta.stop_reason) {
+        stopReason = event.delta.stop_reason;
+      }
+    }
+  } catch (err) {
+    throw mapClaudeError(err);
+  }
+
+  if (stopReason === 'max_tokens') {
+    throw new ClaudeError(
+      'TRUNCATED',
+      'Response was truncated due to max_tokens limit',
+    );
+  }
+
+  return { text, stopReason };
+}
+
+// ---------------------------------------------------------------------------
+// Domain helpers (ported from openai.ts; behavior unchanged)
+// ---------------------------------------------------------------------------
 
 function ensureLineItemIds(type: AssetType, data: AssetData): AssetData {
   if (type === 'invoice') {
     const d = data as InvoiceData;
     if (d.lineItems?.length) {
-      d.lineItems = d.lineItems.map(item => ({
+      d.lineItems = d.lineItems.map((item) => ({
         ...item,
         id: item.id || crypto.randomUUID(),
       }));
@@ -14,7 +272,7 @@ function ensureLineItemIds(type: AssetType, data: AssetData): AssetData {
   } else if (type === 'quote') {
     const d = data as QuoteData;
     if (d.items?.length) {
-      d.items = d.items.map(item => ({
+      d.items = d.items.map((item) => ({
         ...item,
         id: item.id || crypto.randomUUID(),
       }));
@@ -23,15 +281,6 @@ function ensureLineItemIds(type: AssetType, data: AssetData): AssetData {
   return data;
 }
 
-function getOpenAIClient(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey === 'your_openai_api_key_here') {
-    throw new Error('OPENAI_API_KEY is not configured. Please add your OpenAI API key to the .env file.');
-  }
-  return new OpenAI({ apiKey });
-}
-
-// Round to 2 decimal places to avoid floating point drift
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -67,14 +316,12 @@ const VENDOR_EXAMPLES: Record<string, string[]> = {
 function getVendorExamples(spendingCategory: string): string {
   const category = spendingCategory.toLowerCase();
   const matched: string[] = [];
-
   for (const [pattern, vendors] of Object.entries(VENDOR_EXAMPLES)) {
     const keywords = pattern.split('|');
-    if (keywords.some(kw => category.includes(kw))) {
+    if (keywords.some((kw) => category.includes(kw))) {
       matched.push(...vendors);
     }
   }
-
   const unique = [...new Set(matched)];
   if (unique.length > 0) {
     return `Suggested real vendors for "${spendingCategory}": ${unique.join(', ')}`;
@@ -255,18 +502,19 @@ GENERAL RULE:
 - Always show the tax treatment clearly on the invoice with appropriate notes
 `;
 
-// Recalculate subtotals and totals from line items so exported numbers always reconcile
 function recalculateTotals(type: AssetType, data: AssetData): AssetData {
   switch (type) {
     case 'invoice': {
       const d = data as InvoiceData;
       if (!d.lineItems?.length) return data;
-      d.lineItems.forEach(item => {
+      d.lineItems.forEach((item) => {
         item.total = round2(item.quantity * item.unitPrice);
       });
       d.subtotal = round2(d.lineItems.reduce((sum, item) => sum + item.total, 0));
       if (d.taxes?.length) {
-        d.taxes.forEach(t => { t.amount = round2(d.subtotal * t.rate); });
+        d.taxes.forEach((t) => {
+          t.amount = round2(d.subtotal * t.rate);
+        });
         d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
       } else if (d.tax) {
         d.taxes = [{ name: 'Tax', rate: d.subtotal > 0 ? round2(d.tax / d.subtotal) : 0, amount: round2(d.tax) }];
@@ -284,7 +532,9 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
       if (!d.items?.length) return data;
       d.subtotal = round2(d.items.reduce((sum, item) => sum + round2(item.quantity * item.price), 0));
       if (d.taxes?.length) {
-        d.taxes.forEach(t => { t.amount = round2(d.subtotal * t.rate); });
+        d.taxes.forEach((t) => {
+          t.amount = round2(d.subtotal * t.rate);
+        });
         d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
       } else if (d.tax) {
         d.taxes = [{ name: 'Tax', rate: d.subtotal > 0 ? round2(d.tax / d.subtotal) : 0, amount: round2(d.tax) }];
@@ -306,7 +556,9 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
       });
       d.subtotal = round2(d.items.reduce((sum, item) => sum + item.total, 0));
       if (d.taxes?.length) {
-        d.taxes.forEach(t => { t.amount = round2(d.subtotal * t.rate); });
+        d.taxes.forEach((t) => {
+          t.amount = round2(d.subtotal * t.rate);
+        });
         d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
       } else {
         const rate = d.taxRate || 0.0825;
@@ -322,7 +574,7 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
     case 'quote': {
       const d = data as QuoteData;
       if (!d.items?.length) return data;
-      d.items.forEach(item => {
+      d.items.forEach((item) => {
         item.total = round2(item.quantity * item.unitPrice);
       });
       d.subtotal = round2(d.items.reduce((sum, item) => sum + item.total, 0));
@@ -341,8 +593,8 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
     case 'hotel_folio': {
       const d = data as HotelFolioData;
       if (!d.charges?.length) return data;
-      d.roomTotal = round2(d.charges.filter(c => c.category === 'Room').reduce((sum, c) => sum + round2(c.amount), 0));
-      d.incidentalsTotal = round2(d.charges.filter(c => c.category !== 'Room').reduce((sum, c) => sum + round2(c.amount), 0));
+      d.roomTotal = round2(d.charges.filter((c) => c.category === 'Room').reduce((sum, c) => sum + round2(c.amount), 0));
+      d.incidentalsTotal = round2(d.charges.filter((c) => c.category !== 'Room').reduce((sum, c) => sum + round2(c.amount), 0));
       d.taxTotal = d.taxes?.length ? round2(d.taxes.reduce((sum, t) => sum + round2(t.amount), 0)) : 0;
       d.total = round2(d.roomTotal + d.incidentalsTotal + d.taxTotal);
       return d;
@@ -359,7 +611,6 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
   }
 }
 
-// Status messages for different fields by asset type
 const STATUS_TRIGGERS: Record<AssetType, Array<{ field: string; message: string }>> = {
   invoice: [
     { field: '"invoiceNumber"', message: 'Creating invoice header...' },
@@ -418,7 +669,6 @@ const STATUS_TRIGGERS: Record<AssetType, Array<{ field: string; message: string 
   ],
 };
 
-// Currency information for prompt building
 const CURRENCY_INFO: Record<string, { symbol: string; name: string; locale: string }> = {
   USD: { symbol: '$', name: 'US Dollar', locale: 'en-US' },
   EUR: { symbol: '€', name: 'Euro', locale: 'de-DE' },
@@ -447,182 +697,6 @@ const CURRENCY_INFO: Record<string, { symbol: string; name: string; locale: stri
   PHP: { symbol: '₱', name: 'Philippine Peso', locale: 'en-PH' },
 };
 
-export async function generateAssetContentStreaming(
-  type: AssetType,
-  company: CompanyProfile,
-  spendingCategory: string,
-  onStatus: (status: string) => void,
-  relatedAssets?: RelatedAssetContext,
-  invoiceConfig?: InvoiceConfig,
-  currency: string = 'USD',
-  lineItemCount?: number
-): Promise<AssetData> {
-  const openaiClient = getOpenAIClient();
-  const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
-  const prompt = relatedAssets 
-    ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency, lineItemCount)
-    : buildPrompt(type, company, spendingCategory, currency, lineItemCount);
-  const triggers = STATUS_TRIGGERS[type];
-  const triggeredFields = new Set<string>();
-  let fullContent = '';
-
-  // Send initial status
-  const isConnected = relatedAssets && (relatedAssets.quote || relatedAssets.contract);
-  onStatus(isConnected ? 'Linking to related documents...' : 'Initializing generation...');
-
-  // Build system message based on whether this is connected generation
-  let systemMessage = `You are a helpful assistant that generates realistic business document data. Generate JSON data for ${type} documents based on the company profile and spending category provided.
-
-CURRENCY: All monetary values MUST be in ${currency} (${currencyInfo.name}, symbol: ${currencyInfo.symbol})
-- Use appropriate pricing for this currency and region
-- All numbers should be raw numbers (not strings), the symbol will be added during display
-
-CRITICAL REQUIREMENTS:
-1. All vendors MUST be REAL companies that actually exist - do NOT invent fictional company names
-2. Prioritize vendors that operate in or near: ${company.location}
-3. Use well-known national brands OR real regional businesses that specialize in "${spendingCategory}"
-4. Include real addresses (use the vendor's actual headquarters or a real location near the client)
-5. All line items, products, and services MUST be directly related to: "${spendingCategory}"
-
-${getVendorExamples(spendingCategory)}
-
-IMPORTANT: Do NOT use consulting firms (Deloitte, PwC, EY, KPMG, Accenture, McKinsey, BCG) as vendors UNLESS the spending category explicitly involves consulting, advisory, audit, or professional services. For categories like equipment, logistics, utilities, facilities, manufacturing, etc., use vendors that specialize in that specific industry.
-
-The data should have realistic prices and quantities appropriate for the company's size and industry.`;
-
-  if (relatedAssets?.quote) {
-    systemMessage += `
-
-CONNECTED DOCUMENT CONTEXT:
-This ${type} is part of a connected document flow. A Quote has already been created and you MUST maintain consistency:
-- Use the EXACT SAME vendor name, domain, address, email, and phone from the quote
-- Reference the quote number in your document
-- Ensure services/line items align with what was quoted`;
-  }
-
-  if (relatedAssets?.contract) {
-    systemMessage += `
-- A Contract has been created based on the quote - reference the contract number as well
-- The invoice should be for work performed under this contract`;
-  }
-
-  systemMessage += `
-
-Return ONLY valid JSON, no markdown or explanation.`;
-
-  const stream = await openaiClient.chat.completions.create({
-    model: 'gpt-4',
-    messages: [
-      {
-        role: 'system',
-        content: systemMessage,
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ],
-    temperature: 0.7,
-    max_tokens: 2000,
-    stream: true,
-  });
-
-  // Process the stream
-  for await (const chunk of stream) {
-    const content = chunk.choices[0]?.delta?.content || '';
-    fullContent += content;
-
-    // Check for field triggers
-    for (const trigger of triggers) {
-      if (!triggeredFields.has(trigger.field) && fullContent.includes(trigger.field)) {
-        triggeredFields.add(trigger.field);
-        onStatus(trigger.message);
-      }
-    }
-  }
-
-  // Parse the final JSON
-  const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('Invalid response format from OpenAI - no JSON found');
-  }
-
-  try {
-    onStatus('Completing generation...');
-    const parsed = JSON.parse(jsonMatch[0]) as AssetData;
-    return ensureLineItemIds(type, recalculateTotals(type, parsed));
-  } catch {
-    throw new Error('Failed to parse JSON response from OpenAI');
-  }
-}
-
-export async function generateAssetContent(
-  type: AssetType,
-  company: CompanyProfile,
-  spendingCategory: string,
-  currency: string = 'USD',
-  lineItemCount?: number
-): Promise<AssetData> {
-  const openaiClient = getOpenAIClient();
-  const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
-  
-  const prompt = buildPrompt(type, company, spendingCategory, currency, lineItemCount);
-  
-  const response = await openaiClient.chat.completions.create({
-    model: 'gpt-4',
-    messages: [
-      {
-        role: 'system',
-        content: `You are a helpful assistant that generates realistic business document data. Generate JSON data for ${type} documents based on the company profile and spending category provided.
-
-CURRENCY: All monetary values MUST be in ${currency} (${currencyInfo.name}, symbol: ${currencyInfo.symbol})
-- Use appropriate pricing for this currency and region
-- All numbers should be raw numbers (not strings), the symbol will be added during display
-
-CRITICAL REQUIREMENTS:
-1. All vendors MUST be REAL companies that actually exist - do NOT invent fictional company names
-2. Prioritize vendors that operate in or near: ${company.location}
-3. Use well-known national brands OR real regional businesses that specialize in "${spendingCategory}"
-4. Include real addresses (use the vendor's actual headquarters or a real location near the client)
-5. All line items, products, and services MUST be directly related to: "${spendingCategory}"
-
-${getVendorExamples(spendingCategory)}
-
-IMPORTANT: Do NOT use consulting firms (Deloitte, PwC, EY, KPMG, Accenture, McKinsey, BCG) as vendors UNLESS the spending category explicitly involves consulting, advisory, audit, or professional services. For categories like equipment, logistics, utilities, facilities, manufacturing, etc., use vendors that specialize in that specific industry.
-
-The data should have realistic prices and quantities appropriate for the company's size and industry.
-
-Return ONLY valid JSON, no markdown or explanation.`,
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ],
-    temperature: 0.7,
-    max_tokens: 2000,
-  });
-  
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    throw new Error('No content received from OpenAI');
-  }
-  
-  // Parse JSON from response
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('Invalid response format from OpenAI - no JSON found');
-  }
-  
-  try {
-    const parsed = JSON.parse(jsonMatch[0]) as AssetData;
-    return ensureLineItemIds(type, recalculateTotals(type, parsed));
-  } catch {
-    throw new Error('Failed to parse JSON response from OpenAI');
-  }
-}
-
-// Category-specific receipt instructions
 const CATEGORY_INSTRUCTIONS: Record<string, string> = {
   flight: `This is an AIRLINE/FLIGHT receipt. Include these specific details:
 - Airline name (e.g., United, Delta, American, Southwest, JetBlue)
@@ -743,45 +817,163 @@ const CATEGORY_INSTRUCTIONS: Record<string, string> = {
 - Rewards earned if applicable`,
 };
 
-// Quick receipt generation from user prompt
+// ---------------------------------------------------------------------------
+// Public API: asset generation
+// ---------------------------------------------------------------------------
+
+function buildAssetSystemMessage(
+  type: AssetType,
+  company: CompanyProfile,
+  spendingCategory: string,
+  currency: string,
+  relatedAssets?: RelatedAssetContext,
+): string {
+  const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
+
+  let systemMessage = `You are a helpful assistant that generates realistic business document data. Generate JSON data for ${type} documents based on the company profile and spending category provided.
+
+CURRENCY: All monetary values MUST be in ${currency} (${currencyInfo.name}, symbol: ${currencyInfo.symbol})
+- Use appropriate pricing for this currency and region
+- All numbers should be raw numbers (not strings), the symbol will be added during display
+
+CRITICAL REQUIREMENTS:
+1. All vendors MUST be REAL companies that actually exist - do NOT invent fictional company names
+2. Prioritize vendors that operate in or near: ${company.location}
+3. Use well-known national brands OR real regional businesses that specialize in "${spendingCategory}"
+4. Include real addresses (use the vendor's actual headquarters or a real location near the client)
+5. All line items, products, and services MUST be directly related to: "${spendingCategory}"
+
+${getVendorExamples(spendingCategory)}
+
+IMPORTANT: Do NOT use consulting firms (Deloitte, PwC, EY, KPMG, Accenture, McKinsey, BCG) as vendors UNLESS the spending category explicitly involves consulting, advisory, audit, or professional services. For categories like equipment, logistics, utilities, facilities, manufacturing, etc., use vendors that specialize in that specific industry.
+
+The data should have realistic prices and quantities appropriate for the company's size and industry.`;
+
+  if (relatedAssets?.quote) {
+    systemMessage += `
+
+CONNECTED DOCUMENT CONTEXT:
+This ${type} is part of a connected document flow. A Quote has already been created and you MUST maintain consistency:
+- Use the EXACT SAME vendor name, domain, address, email, and phone from the quote
+- Reference the quote number in your document
+- Ensure services/line items align with what was quoted`;
+  }
+
+  if (relatedAssets?.contract) {
+    systemMessage += `
+- A Contract has been created based on the quote - reference the contract number as well
+- The invoice should be for work performed under this contract`;
+  }
+
+  systemMessage += `
+
+Return ONLY valid JSON, no markdown or explanation.`;
+
+  return systemMessage;
+}
+
+export async function generateAssetContentStreaming(
+  type: AssetType,
+  company: CompanyProfile,
+  spendingCategory: string,
+  onStatus: (status: string) => void,
+  relatedAssets?: RelatedAssetContext,
+  invoiceConfig?: InvoiceConfig,
+  currency: string = 'USD',
+  lineItemCount?: number,
+): Promise<AssetData> {
+  const prompt = relatedAssets
+    ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency, lineItemCount)
+    : buildPrompt(type, company, spendingCategory, currency, lineItemCount);
+
+  const triggers = STATUS_TRIGGERS[type];
+  const triggeredFields = new Set<string>();
+
+  const isConnected = relatedAssets && (relatedAssets.quote || relatedAssets.contract);
+  onStatus(isConnected ? 'Linking to related documents...' : 'Initializing generation...');
+
+  const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency, relatedAssets);
+
+  let aggregated = '';
+  const { text } = await callClaudeStream({
+    system: systemMessage,
+    user: prompt,
+    maxTokens: TOKEN_BUDGETS.asset,
+    onDelta: (chunk) => {
+      aggregated += chunk;
+      for (const trigger of triggers) {
+        if (!triggeredFields.has(trigger.field) && aggregated.includes(trigger.field)) {
+          triggeredFields.add(trigger.field);
+          onStatus(trigger.message);
+        }
+      }
+    },
+  });
+
+  onStatus('Completing generation...');
+  const parsed = extractJSON<AssetData>(text);
+  return ensureLineItemIds(type, recalculateTotals(type, parsed));
+}
+
+export async function generateAssetContent(
+  type: AssetType,
+  company: CompanyProfile,
+  spendingCategory: string,
+  currency: string = 'USD',
+  lineItemCount?: number,
+): Promise<AssetData> {
+  const prompt = buildPrompt(type, company, spendingCategory, currency, lineItemCount);
+  const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency);
+
+  const { text } = await callClaude({
+    system: systemMessage,
+    user: prompt,
+    maxTokens: TOKEN_BUDGETS.asset,
+  });
+
+  const parsed = extractJSON<AssetData>(text);
+  return ensureLineItemIds(type, recalculateTotals(type, parsed));
+}
+
+// ---------------------------------------------------------------------------
+// Public API: quick-receipt generation
+// ---------------------------------------------------------------------------
+
 export async function generateQuickReceiptContent(
   prompt: string,
   receiptType: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt',
   currency: string,
-  onStatus: (status: string) => void
+  onStatus: (status: string) => void,
 ): Promise<AssetData> {
-  const openaiClient = getOpenAIClient();
   const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
-  
+
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   const timeStr = today.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  
-  // Calculate dates for hotel/flight scenarios
+
   const checkInDate = new Date(today);
   checkInDate.setDate(checkInDate.getDate() - 3);
   const checkInStr = checkInDate.toISOString().split('T')[0];
-  
+
   const bookingDate = new Date(today);
   bookingDate.setDate(bookingDate.getDate() - 14);
   const bookingDateStr = bookingDate.toISOString().split('T')[0];
-  
+
   const flightDate = new Date(today);
   flightDate.setDate(flightDate.getDate() + 7);
   const flightDateStr = flightDate.toISOString().split('T')[0];
-  
-  // Extract category from prompt if present
+
   const categoryMatch = prompt.match(/\[Category:\s*(\w+)\]/i);
   const category = categoryMatch ? categoryMatch[1].toLowerCase() : null;
   const cleanPrompt = prompt.replace(/\[Category:\s*\w+\]\s*/i, '').trim();
-  
-  const categoryInstructions = category && CATEGORY_INSTRUCTIONS[category] 
-    ? `\n\nSPECIFIC RECEIPT TYPE:\n${CATEGORY_INSTRUCTIONS[category]}\n`
-    : '';
+
+  const categoryInstructions =
+    category && CATEGORY_INSTRUCTIONS[category]
+      ? `\n\nSPECIFIC RECEIPT TYPE:\n${CATEGORY_INSTRUCTIONS[category]}\n`
+      : '';
 
   onStatus('Analyzing your description...');
 
-  // Build system message based on receipt type
   let systemMessage: string;
   let triggers: Array<{ field: string; message: string }>;
 
@@ -818,7 +1010,7 @@ JSON Structure for hotel_folio:
     "loyaltyTier": "string (optional, like 'Gold', 'Platinum')"
   },
   "confirmation": "string (confirmation number like ABC123456)",
-  "checkIn": "string (YYYY-MM-DD - use from description or reasonable date)",
+  "checkIn": "string (YYYY-MM-DD - use from description or reasonable date like ${checkInStr})",
   "checkOut": "string (YYYY-MM-DD - use from description or ${todayStr})",
   "roomNumber": "string (like '1204')",
   "roomType": "string (like 'King Deluxe', 'Executive Suite')",
@@ -1005,7 +1197,6 @@ Return ONLY valid JSON, no markdown or explanation.`;
       { field: '"barcode"', message: 'Generating barcode...' },
     ];
   } else {
-    // receipt (digital)
     systemMessage = `You are a helpful assistant that generates realistic digital receipt data from user descriptions.
 
 CURRENCY: All monetary values MUST be in ${currency} (${currencyInfo.name}, symbol: ${currencyInfo.symbol})
@@ -1058,71 +1249,137 @@ Return ONLY valid JSON, no markdown or explanation.`;
   }
 
   const triggeredFields = new Set<string>();
-  let fullContent = '';
+  let aggregated = '';
 
   const categoryLabel = category ? ` (${category.replace('_', ' ')})` : '';
-  const receiptTypeLabel = receiptType === 'hotel_folio' ? 'hotel folio' 
-    : receiptType === 'airline_receipt' ? 'airline receipt'
-    : receiptType === 'paper_receipt' ? 'thermal paper receipt'
-    : 'digital receipt';
-    
-  const stream = await openaiClient.chat.completions.create({
-    model: 'gpt-4',
-    messages: [
-      { role: 'system', content: systemMessage },
-      { role: 'user', content: `Generate a ${receiptTypeLabel}${categoryLabel} based on this description:\n\n${cleanPrompt}` },
-    ],
-    temperature: 0.7,
-    max_tokens: 3000,
-    stream: true,
+  const receiptTypeLabel =
+    receiptType === 'hotel_folio'
+      ? 'hotel folio'
+      : receiptType === 'airline_receipt'
+        ? 'airline receipt'
+        : receiptType === 'paper_receipt'
+          ? 'thermal paper receipt'
+          : 'digital receipt';
+
+  const userMessage = `Generate a ${receiptTypeLabel}${categoryLabel} based on this description:\n\n${cleanPrompt}`;
+
+  const { text } = await callClaudeStream({
+    system: systemMessage,
+    user: userMessage,
+    maxTokens: TOKEN_BUDGETS.receipt,
+    onDelta: (chunk) => {
+      aggregated += chunk;
+      for (const trigger of triggers) {
+        if (!triggeredFields.has(trigger.field) && aggregated.includes(trigger.field)) {
+          triggeredFields.add(trigger.field);
+          onStatus(trigger.message);
+        }
+      }
+    },
   });
 
-  for await (const chunk of stream) {
-    const content = chunk.choices[0]?.delta?.content || '';
-    fullContent += content;
-
-    // Check for field triggers
-    for (const trigger of triggers) {
-      if (!triggeredFields.has(trigger.field) && fullContent.includes(trigger.field)) {
-        triggeredFields.add(trigger.field);
-        onStatus(trigger.message);
-      }
-    }
-  }
-
   onStatus('Finalizing receipt...');
-
-  // Parse the complete JSON
-  const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('Invalid response format from OpenAI - no JSON found');
-  }
-
-  try {
-    const parsed = JSON.parse(jsonMatch[0]) as AssetData;
-    return recalculateTotals(receiptType || 'receipt', parsed);
-  } catch {
-    throw new Error('Failed to parse JSON response from OpenAI');
-  }
+  const parsed = extractJSON<AssetData>(text);
+  return recalculateTotals(receiptType || 'receipt', parsed);
 }
 
-function buildPrompt(type: AssetType, company: CompanyProfile, spendingCategory: string, currency: string = 'USD', lineItemCount?: number): string {
-  // Calculate actual dates for realistic document generation
+// ---------------------------------------------------------------------------
+// Public API: company enrichment via web_search
+// ---------------------------------------------------------------------------
+
+export interface EnrichedCompanyData {
+  name: string;
+  description: string;
+  employeeCount: string;
+  industry: string;
+  location: string;
+  spendingCategories: string[];
+}
+
+const ENRICHMENT_SYSTEM = `You are a research assistant. Your job is to look up a company by its website domain and return a structured profile.
+
+Use the web_search tool to find current, accurate information. Search for the company name, "about" page, "careers" or LinkedIn pages for employee count, headquarters address, and industry.
+
+Return ONLY a single JSON object with this exact shape (no markdown, no explanation, no prose):
+
+{
+  "name": "string (proper company name, e.g. 'Acme Corporation')",
+  "description": "string (2-3 sentence summary of what the company does)",
+  "employeeCount": "string (formatted with commas, e.g. '1,200' or 'Unknown' if not found)",
+  "industry": "string (e.g. 'Financial Technology', 'SaaS', 'E-commerce')",
+  "location": "string (full HQ address: 'Street, City, STATE ZIP, Country' or just 'City, State, Country' if street unknown)",
+  "spendingCategories": ["array of 5-7 likely B2B expense categories for this specific company based on its industry and size"]
+}
+
+If the company cannot be found via web search, generate a reasonable profile from your training knowledge of the domain. Always return valid JSON in the exact shape above.`;
+
+export async function enrichCompanyProfile(
+  cleanDomain: string,
+): Promise<EnrichedCompanyData> {
+  const userMessage = `Look up the company at the website domain "${cleanDomain}" and return their profile.
+
+Search for:
+1. Their company name and what they do (description)
+2. Their headquarters address (full street address if available)
+3. Their employee count (LinkedIn, Crunchbase, or annual report)
+4. Their industry classification
+
+Then identify the 5-7 most likely B2B spending categories this specific company would have based on their industry, size, and business model. Be specific to their actual operations - avoid generic categories unless they truly apply.
+
+Return only the JSON profile.`;
+
+  const { text } = await callClaude({
+    system: ENRICHMENT_SYSTEM,
+    user: userMessage,
+    maxTokens: TOKEN_BUDGETS.enrichment,
+    temperature: 0.3,
+    tools: [
+      {
+        type: 'web_search_20260209',
+        name: 'web_search',
+        max_uses: 5,
+      },
+    ],
+  });
+
+  const parsed = extractJSON<EnrichedCompanyData>(text);
+
+  if (!parsed.name || !parsed.spendingCategories || !Array.isArray(parsed.spendingCategories)) {
+    throw new ClaudeError(
+      'PARSE_ERROR',
+      'Enrichment response missing required fields (name, spendingCategories)',
+    );
+  }
+
+  return parsed;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt builders (ported verbatim from openai.ts)
+// ---------------------------------------------------------------------------
+
+function buildPrompt(
+  type: AssetType,
+  company: CompanyProfile,
+  spendingCategory: string,
+  currency: string = 'USD',
+  lineItemCount?: number,
+): string {
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
-  
+  const todayStr = today.toISOString().split('T')[0];
+
   const dueDate = new Date(today);
   dueDate.setDate(dueDate.getDate() + 30);
   const dueDateStr = dueDate.toISOString().split('T')[0];
-  
+
   const validUntilDate = new Date(today);
   validUntilDate.setDate(validUntilDate.getDate() + 30);
   const validUntilStr = validUntilDate.toISOString().split('T')[0];
-  
+
   const effectiveDate = new Date(today);
   effectiveDate.setDate(effectiveDate.getDate() + 14);
   const effectiveDateStr = effectiveDate.toISOString().split('T')[0];
-  
+
   const expirationDate = new Date(effectiveDate);
   expirationDate.setFullYear(expirationDate.getFullYear() + 1);
   const expirationDateStr = expirationDate.toISOString().split('T')[0];
@@ -1186,14 +1443,14 @@ JSON Structure:
   "invoiceNumber": "string (format: INV-XXXXX)",
   "date": "${todayStr}",
   "dueDate": "${dueDateStr}",
-  "vendor": { 
+  "vendor": {
     "name": "string (REAL company name that exists)",
     "domain": "string (the vendor's actual website domain, e.g., 'dell.com', 'cdw.com')",
     "address": "string (real address near ${company.location} or vendor headquarters)",
     "email": "string (realistic email for that company)",
     "phone": "string"
   },
-  "client": { 
+  "client": {
     "name": "${company.name}",
     "address": "${company.location}",
     "email": "accounts@${company.domain}"
@@ -1250,7 +1507,7 @@ JSON Structure:
 {
   "receiptNumber": "string (format: RCP-XXXXX)",
   "date": "${todayStr}",
-  "vendor": { 
+  "vendor": {
     "name": "string (REAL store/retailer name that exists)",
     "domain": "string (the vendor's actual website domain, e.g., 'staples.com', 'bestbuy.com')",
     "address": "string (real store address near ${company.location})"
@@ -1380,14 +1637,14 @@ JSON Structure:
   "quoteNumber": "string (format: QTE-XXXXX)",
   "date": "${todayStr}",
   "validUntil": "${validUntilStr}",
-  "vendor": { 
+  "vendor": {
     "name": "string (REAL professional services company that exists)",
     "domain": "string (the vendor's actual website domain, e.g., 'accenture.com', 'deloitte.com')",
     "address": "string (real office address serving ${company.location})",
     "email": "string (realistic email for that company)",
     "phone": "string"
   },
-  "client": { 
+  "client": {
     "name": "${company.name}",
     "address": "${company.location}",
     "email": "procurement@${company.domain}"
@@ -1434,13 +1691,13 @@ JSON Structure:
   "effectiveDate": "${effectiveDateStr}",
   "expirationDate": "${expirationDateStr}",
   "parties": {
-    "provider": { 
+    "provider": {
       "name": "string (REAL ${spendingCategory} service provider that exists)",
       "domain": "string (the provider's actual website domain, e.g., 'aws.amazon.com', 'adp.com')",
       "address": "string (real office address serving ${company.location})",
       "representative": "string (full name)"
     },
-    "client": { 
+    "client": {
       "name": "${company.name}",
       "address": "${company.location}",
       "representative": "string (full name)"
@@ -1473,11 +1730,11 @@ Calculate lastDateToAction by subtracting renewalNoticeDays from the expirationD
 
 Generate exactly ${lineItemCount || 5} specific ${spendingCategory} services and 7-9 contract terms (including the 3 mandatory ones above). Set contract value appropriate for a ${company.employeeCount} employee company's ${spendingCategory} needs.`;
 
-    case 'hotel_folio':
+    case 'hotel_folio': {
       const checkInDate = new Date(today);
       checkInDate.setDate(checkInDate.getDate() - 3);
       const checkInStr = checkInDate.toISOString().split('T')[0];
-      
+
       return `${baseInfo}
 Generate a realistic HOTEL FOLIO (checkout receipt/invoice) for a business trip by someone from ${company.name}.
 
@@ -1554,16 +1811,17 @@ JSON Structure:
 }
 
 Generate a realistic 2-4 night stay with 8-15 charge line items including room, incidentals, and taxes.`;
+    }
 
-    case 'airline_receipt':
+    case 'airline_receipt': {
       const bookingDate = new Date(today);
       bookingDate.setDate(bookingDate.getDate() - 14);
       const bookingDateStr = bookingDate.toISOString().split('T')[0];
-      
+
       const flightDate = new Date(today);
       flightDate.setDate(flightDate.getDate() + 7);
       const flightDateStr = flightDate.toISOString().split('T')[0];
-      
+
       return `${baseInfo}
 Generate a realistic AIRLINE EMAIL RECEIPT for a business trip booked by someone from ${company.name}.
 
@@ -1650,42 +1908,39 @@ JSON Structure:
 }
 
 Generate a realistic 1-2 flight itinerary (one-way or round-trip) with appropriate pricing for the route and class.`;
+    }
 
     default:
       throw new Error(`Unknown asset type: ${type}`);
   }
 }
 
-// Build prompts for connected document generation (quote -> contract -> invoice flow)
 function buildConnectedPrompt(
-  type: AssetType, 
-  company: CompanyProfile, 
+  type: AssetType,
+  company: CompanyProfile,
   spendingCategory: string,
   relatedAssets: RelatedAssetContext,
   invoiceConfig?: InvoiceConfig,
   currency: string = 'USD',
-  lineItemCount?: number
+  lineItemCount?: number,
 ): string {
-  // Calculate actual dates for realistic document generation
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
-  
+
   const dueDate = new Date(today);
   dueDate.setDate(dueDate.getDate() + 30);
   const dueDateStr = dueDate.toISOString().split('T')[0];
-  
+
   const effectiveDate = new Date(today);
   effectiveDate.setDate(effectiveDate.getDate() + 14);
   const effectiveDateStr = effectiveDate.toISOString().split('T')[0];
-  
+
   const expirationDate = new Date(effectiveDate);
   expirationDate.setFullYear(expirationDate.getFullYear() + 1);
   const expirationDateStr = expirationDate.toISOString().split('T')[0];
 
-  const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
   const { quote, contract } = relatedAssets;
 
-  // Contract connected to Quote
   if (type === 'contract' && quote) {
     return `
 CONNECTED DOCUMENT GENERATION - CONTRACT FROM QUOTE
@@ -1703,7 +1958,7 @@ QUOTE DETAILS TO REFERENCE:
 - Vendor Phone: ${quote.vendor.phone}
 
 QUOTED LINE ITEMS:
-${quote.items.map(item => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
+${quote.items.map((item) => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
 
 CLIENT INFORMATION:
 - Client Name: ${quote.client.name}
@@ -1725,13 +1980,13 @@ JSON Structure:
   "expirationDate": "${expirationDateStr}",
   "quoteReference": "${quote.quoteNumber}",
   "parties": {
-    "provider": { 
+    "provider": {
       "name": "${quote.vendor.name}",
       "domain": "${quote.vendor.domain}",
       "address": "${quote.vendor.address}",
       "representative": "string (full name)"
     },
-    "client": { 
+    "client": {
       "name": "${company.name}",
       "address": "${company.location}",
       "representative": "string (full name)"
@@ -1765,34 +2020,39 @@ Calculate lastDateToAction by subtracting renewalNoticeDays from the expirationD
 Transform the quoted line items into contract service descriptions. Include 7-9 contract terms (including the 3 mandatory ones above).`;
   }
 
-  // Invoice connected to Quote and/or Contract
   if (type === 'invoice' && (quote || contract)) {
-    const vendorInfo = quote?.vendor || (contract ? {
-      name: contract.parties.provider.name,
-      domain: contract.parties.provider.domain,
-      address: contract.parties.provider.address,
-      email: `billing@${contract.parties.provider.domain}`,
-      phone: '(800) 555-0100'
-    } : null);
+    const vendorInfo = quote?.vendor || (contract
+      ? {
+          name: contract.parties.provider.name,
+          domain: contract.parties.provider.domain,
+          address: contract.parties.provider.address,
+          email: `billing@${contract.parties.provider.domain}`,
+          phone: '(800) 555-0100',
+        }
+      : null);
 
-    const referenceSection = [];
-    if (quote) {
-      referenceSection.push(`Quote Reference: ${quote.quoteNumber}`);
-    }
-    if (contract) {
-      referenceSection.push(`Contract Reference: ${contract.contractNumber}`);
-    }
+    const referenceSection: string[] = [];
+    if (quote) referenceSection.push(`Quote Reference: ${quote.quoteNumber}`);
+    if (contract) referenceSection.push(`Contract Reference: ${contract.contractNumber}`);
 
     const totalAmount = quote?.total || contract?.totalValue || 10000;
-    
-    // Handle multiple invoices configuration
+
     let invoiceAmountInstructions = '';
     let invoiceNumberSuffix = '';
-    
+
     if (invoiceConfig) {
-      const { invoiceNumber, totalInvoices, isLast, previousInvoicedAmount, targetSubtotal, splitPercentage, matchingMode, quantitySplits } = invoiceConfig;
+      const {
+        invoiceNumber,
+        totalInvoices,
+        isLast,
+        previousInvoicedAmount,
+        targetSubtotal,
+        splitPercentage,
+        matchingMode,
+        quantitySplits,
+      } = invoiceConfig;
       invoiceNumberSuffix = `-${invoiceNumber}`;
-      
+
       const remainingBalance = totalAmount - previousInvoicedAmount;
       const label = `Payment ${invoiceNumber} of ${totalInvoices} (${splitPercentage}%)`;
       const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1806,7 +2066,7 @@ PROPORTIONAL LINE ITEMS (2-Way Matching Mode):
 - Each line item's total = quoted total × ${splitPercentage}% (the split percentage for this invoice)
 - Keep quantity at 1 for each item and set unitPrice = item total (these are license/subscription payments)
 - Concrete targets for each line item:
-${quote.items.map(item => `  - "${item.description}" → $${fmt(Math.round(item.total * splitPercentage / 100 * 100) / 100)}`).join('\n')}
+${quote.items.map((item) => `  - "${item.description}" → $${fmt(Math.round((item.total * splitPercentage) / 100 * 100) / 100)}`).join('\n')}
 - The sum of these amounts MUST equal exactly $${fmt(targetSubtotal)}`;
       } else if (matchingMode === '3way' && quantitySplits && quantitySplits.length > 0) {
         lineItemModeInstructions = `
@@ -1814,7 +2074,7 @@ QUANTITY-BASED LINE ITEMS (3-Way Matching Mode - Partial Delivery ${invoiceNumbe
 - Use the EXACT SAME line item descriptions and IDs from the quote — do NOT rename or rephrase them
 - Use the EXACT SAME unit prices from the quote
 - This invoice represents a PARTIAL DELIVERY with these specific quantities and amounts:
-${quantitySplits.map(li => `  - [ID: ${li.id}] "${li.description}": ${li.quantity} units × $${fmt(li.unitPrice)} = $${fmt(li.total)}`).join('\n')}
+${quantitySplits.map((li) => `  - [ID: ${li.id}] "${li.description}": ${li.quantity} units × $${fmt(li.unitPrice)} = $${fmt(li.total)}`).join('\n')}
 - The subtotal MUST equal exactly $${fmt(targetSubtotal)}
 - Each line item's quantity, unitPrice, and total MUST match the values above exactly
 - This represents a shipment/delivery of goods that will be received and matched against the original PO`;
@@ -1844,16 +2104,20 @@ AMOUNT VERIFICATION:
 TAX CONSISTENCY: All ${totalInvoices} invoices in this series MUST use the same tax name and rate. Use the tax rate appropriate for the vendor's location. Do NOT vary the tax rate between invoices.`;
     }
 
-    const lineItemsSource = quote ? `
+    const lineItemsSource = quote
+      ? `
 QUOTED LINE ITEMS (MUST preserve exact quantities and unit prices from the quote):
-${quote.items.map(item => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
+${quote.items.map((item) => `- [ID: ${item.id || 'N/A'}] ${item.description}: ${item.quantity} x $${item.unitPrice} = $${item.total}`).join('\n')}
 
 CRITICAL: Each invoice line item MUST use the SAME quantity and unit price as the quote above. Do NOT collapse quantities into 1 with a lump-sum unit price. For example, if the quote says "100 x $250.00 = $25,000.00", the invoice MUST also say quantity: 100, unitPrice: 250.00, total: 25000.00.
-` : contract ? `
+`
+      : contract
+        ? `
 CONTRACT SERVICES (invoice for these services):
-${contract.services.map(service => `- ${service}`).join('\n')}
+${contract.services.map((service) => `- ${service}`).join('\n')}
 Contract Total Value: $${contract.totalValue.toLocaleString()}
-` : '';
+`
+        : '';
 
     return `
 CONNECTED DOCUMENT GENERATION - INVOICE FROM ${quote && contract ? 'QUOTE & CONTRACT' : quote ? 'QUOTE' : 'CONTRACT'}
@@ -1861,7 +2125,7 @@ CONNECTED DOCUMENT GENERATION - INVOICE FROM ${quote && contract ? 'QUOTE & CONT
 Generate an INVOICE for work performed under the existing agreement.
 ${invoiceAmountInstructions}
 
-${referenceSection.length > 0 ? `DOCUMENT REFERENCES:\n${referenceSection.map(r => `- ${r}`).join('\n')}` : ''}
+${referenceSection.length > 0 ? `DOCUMENT REFERENCES:\n${referenceSection.map((r) => `- ${r}`).join('\n')}` : ''}
 
 ${quote ? `QUOTE DETAILS:
 - Quote Number: ${quote.quoteNumber}
@@ -1899,14 +2163,14 @@ JSON Structure:
   "dueDate": "${dueDateStr}",
   ${quote ? `"quoteReference": "${quote.quoteNumber}",` : ''}
   ${contract ? `"contractReference": "${contract.contractNumber}",` : ''}
-  "vendor": { 
+  "vendor": {
     "name": "${vendorInfo?.name}",
     "domain": "${vendorInfo?.domain}",
     "address": "${vendorInfo?.address}",
     "email": "${vendorInfo?.email || `billing@${vendorInfo?.domain}`}",
     "phone": "${vendorInfo?.phone || '(800) 555-0100'}"
   },
-  "client": { 
+  "client": {
     "name": "${company.name}",
     "address": "${company.location}",
     "email": "accounts@${company.domain}"
@@ -1940,6 +2204,5 @@ The VENDOR is: ${vendorInfo?.name} located at ${vendorInfo?.address}. Evaluate w
 Generate exactly ${lineItemCount || 3} line items that represent billable work from the quoted/contracted services.`;
   }
 
-  // Fall back to regular prompt if no connected context applies
   return buildPrompt(type, company, spendingCategory, currency);
 }

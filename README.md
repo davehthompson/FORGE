@@ -14,8 +14,9 @@ An internal application for creating demo asset files (invoices, receipts, quote
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Vite
 - **Backend**: Node.js, Express, TypeScript
-- **AI**: OpenAI GPT-4
-- **Company Data**: Clearbit/Apollo Enrichment API
+- **AI (text)**: Anthropic Claude Opus 4.7 (asset/receipt generation + domain enrichment via the hosted `web_search` tool)
+- **AI (images)**: Google Gemini (paper-receipt photorealistic image generation)
+- **Logos**: logo.dev (publishable token)
 
 ## Getting Started
 
@@ -41,13 +42,19 @@ Create a `.env` file in the `server` directory with your API keys:
 
 ```env
 PORT=3001
-OPENAI_API_KEY=your_openai_api_key
-PDL_API_KEY=your_pdl_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+GEMINI_API_KEY=your_gemini_api_key
+LOGO_DEV_KEY=your_logo_dev_publishable_key
+DATABASE_URL=your_neon_postgres_connection_string
 ```
 
-**Note:** Both API keys are required for the application to function:
-- **PDL API Key**: Used to fetch company information from domains via People Data Labs. Get one at [peopledatalabs.com](https://www.peopledatalabs.com)
-- **OpenAI API Key**: Used to generate realistic asset content. Get one at [platform.openai.com](https://platform.openai.com)
+**Note:** Required keys:
+- **Anthropic API Key**: Used for company enrichment (via Claude's hosted `web_search` tool) and all text-asset generation. Get one at [console.anthropic.com](https://console.anthropic.com).
+- **Gemini API Key**: Used only for paper-receipt photorealistic image generation. Get one at [aistudio.google.com](https://aistudio.google.com).
+- **Logo.dev Key**: Publishable (`pk_*`) token used to render company/vendor logos in PDFs and the editor. Get one at [logo.dev](https://logo.dev).
+- **Database URL**: Neon Postgres connection string for analytics + persistence.
+
+The client also reads `VITE_LOGO_DEV_KEY` at build time (set in GitHub Actions Variables for deploys).
 
 ### Development
 

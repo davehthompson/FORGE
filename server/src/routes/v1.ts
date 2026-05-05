@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import archiver from 'archiver';
-import { generateAssetContent, generateAssetContentStreaming, generateQuickReceiptContent } from '../services/openai.js';
+import {
+  generateAssetContent,
+  generateAssetContentStreaming,
+  generateQuickReceiptContent,
+  formatErrorResponse,
+} from '../services/claude.js';
 import { generatePdf, generateJpg } from '../services/pdf.js';
 import { enrichCompanyFromDomain } from '../services/enrichment.js';
 import { trackGeneration } from '../services/analytics.js';
@@ -109,10 +114,8 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('[v1/generate] error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to generate asset',
-    });
+    const { status, body } = formatErrorResponse(error);
+    res.status(status).json(body);
   }
 });
 
@@ -309,10 +312,8 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[v1/bundle] error:', error);
     if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to generate bundle',
-      });
+      const { status, body } = formatErrorResponse(error);
+      res.status(status).json(body);
     }
   }
 });
@@ -360,9 +361,7 @@ v1Router.post('/receipt', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('[v1/receipt] error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to generate receipt',
-    });
+    const { status, body } = formatErrorResponse(error);
+    res.status(status).json(body);
   }
 });

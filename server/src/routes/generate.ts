@@ -1,5 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { generateAssetContent, generateAssetContentStreaming, generateQuickReceiptContent } from '../services/openai.js';
+import {
+  generateAssetContent,
+  generateAssetContentStreaming,
+  generateQuickReceiptContent,
+  formatErrorResponse,
+} from '../services/claude.js';
 import { generateReceiptImage, AVAILABLE_SCENES } from '../services/gemini.js';
 import { CompanyProfile, AssetType, RelatedAssetContext, InvoiceConfig } from '../types.js';
 import { trackGeneration } from '../services/analytics.js';
@@ -75,10 +80,8 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
     });
   } catch (error) {
     console.error('Generation error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to generate asset',
-    });
+    const { status, body } = formatErrorResponse(error);
+    res.status(status).json(body);
   }
 });
 
@@ -173,20 +176,15 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
     res.end();
   } catch (error) {
     console.error('Streaming generation error:', error);
-    
-    // If headers haven't been sent, send JSON error
+
+    const { status, body } = formatErrorResponse(error);
+
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to generate asset',
-      });
+      return res.status(status).json(body);
     }
-    
-    // Otherwise send SSE error event
+
     res.write(`event: error\n`);
-    res.write(`data: ${JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Failed to generate asset' 
-    })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: body.error, code: body.code })}\n\n`);
     res.end();
   }
 });
@@ -253,18 +251,15 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
     res.end();
   } catch (error) {
     console.error('Quick receipt generation error:', error);
-    
+
+    const { status, body } = formatErrorResponse(error);
+
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to generate receipt',
-      });
+      return res.status(status).json(body);
     }
-    
+
     res.write(`event: error\n`);
-    res.write(`data: ${JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Failed to generate receipt' 
-    })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: body.error, code: body.code })}\n\n`);
     res.end();
   }
 });
@@ -311,9 +306,7 @@ generateRouter.post('/receipt-image', async (req: Request<{}, {}, ReceiptImageRe
     res.send(imageBuffer);
   } catch (error) {
     console.error('Receipt image generation error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to generate receipt image',
-    });
+    const { status, body } = formatErrorResponse(error);
+    res.status(status).json(body);
   }
 });

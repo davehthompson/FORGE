@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { enrichCompanyFromDomain } from '../services/enrichment.js';
+import { formatErrorResponse } from '../services/claude.js';
 import { isTestDomain, getMockCompanyProfile } from '../services/mockData.js';
 
 export const enrichRouter = Router();
@@ -32,9 +33,7 @@ enrichRouter.post('/', async (req: Request<{}, {}, EnrichRequest>, res: Response
     });
   } catch (error) {
     console.error('Enrichment error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to enrich company data',
-    });
+    const { status, body } = formatErrorResponse(error);
+    res.status(status).json(body);
   }
 });
