@@ -99,8 +99,8 @@ export async function enrichCompanyFromDomain(domain: string): Promise<CompanyPr
   };
 }
 
-// Logo.dev API utility
-const LOGO_DEV_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
+// Logo.dev API utility — publishable token, set via LOGO_DEV_KEY env var.
+const LOGO_DEV_KEY = process.env.LOGO_DEV_KEY ?? '';
 
 function getLogoUrl(domain: string, size: number = 128): string {
   const cleanDomain = domain

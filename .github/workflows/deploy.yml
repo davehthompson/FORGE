@@ -47,8 +47,13 @@ jobs:
         run: npm ci
 
       # ---- Build ----
+      # Vite bakes VITE_* env vars into the bundle at build time. Set the
+      # logo.dev publishable token from a repo Variable so it isn't hardcoded
+      # in source (Ramplify's secret scanner rejects literal pk_*/sk_* assignments).
       - name: Build client
         working-directory: client
+        env:
+          VITE_LOGO_DEV_KEY: ${{ vars.VITE_LOGO_DEV_KEY }}
         run: npm run build
 
       - name: Build server

@@ -4,8 +4,8 @@ import { PDFDocument } from 'pdf-lib';
 import sharp from 'sharp';
 import { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../types.js';
 
-// Logo API key for logo.dev
-const LOGO_API_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
+// Logo.dev publishable token — set via LOGO_DEV_KEY env var.
+const LOGO_API_KEY = process.env.LOGO_DEV_KEY ?? '';
 
 // Metadata constants for AI-generated content
 const AI_METADATA = {

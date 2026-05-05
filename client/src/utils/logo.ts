@@ -1,6 +1,7 @@
 // Logo.dev API utility
-// Publishable key is safe for client-side use
-const LOGO_DEV_KEY = 'pk_AxloykzTSi-S1pEaFbM7Lg';
+// Publishable token (pk_*) — safe to ship in the client bundle.
+// Injected at build time via Vite from VITE_LOGO_DEV_KEY (set in CI / .env.local).
+const LOGO_DEV_KEY = import.meta.env.VITE_LOGO_DEV_KEY ?? '';
 
 interface LogoOptions {
   size?: number;
