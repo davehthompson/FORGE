@@ -1,0 +1,118 @@
+name: Deploy to Ramplify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ramplify-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Change this to match your Ramplify app slug.
+  # (Or move to a repo-level GitHub Actions Variable: vars.RAMPLIFY_APP_SLUG)
+  RAMPLIFY_APP_SLUG: forge
+  NODE_VERSION: '20'
+
+jobs:
+  deploy:
+    name: Build & deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # ---- Install ----
+      # Skip the root `postinstall` (which would re-install server deps);
+      # we install client + server explicitly below.
+      - name: Install root deps
+        env:
+          RAMPLIFY_SKIP_POSTINSTALL: '1'
+        run: npm ci
+
+      - name: Install server deps
+        working-directory: server
+        run: npm ci
+
+      - name: Install client deps
+        working-directory: client
+        run: npm ci
+
+      # ---- Build ----
+      - name: Build client
+        working-directory: client
+        run: npm run build
+
+      - name: Build server
+        working-directory: server
+        run: npm run build
+
+      # ---- Package ----
+      # Ship source + built artifacts. Ramplify will reinstall prod deps from
+      # the lockfiles (root postinstall cascades into server).
+      - name: Create deploy zip
+        run: |
+          set -euxo pipefail
+          zip -r app.zip . \
+            -x '.git/*' \
+            -x '.github/*' \
+            -x 'node_modules/*' \
+            -x '*/node_modules/*' \
+            -x '**/node_modules/*' \
+            -x '.env' '*/.env' '**/.env' \
+            -x '.env.local' '*/.env.local' '**/.env.local' \
+            -x '.env.*.local' '*/.env.*.local' '**/.env.*.local' \
+            -x '.vercel/*' \
+            -x '.DS_Store' '**/.DS_Store' \
+            -x '*.zip' \
+            -x 'coverage/*' '**/coverage/*' \
+            -x 'tests/*' '**/__tests__/*' \
+            -x '*.log' '**/*.log'
+          ls -lh app.zip
+
+      # ---- Deploy ----
+      # Docs: https://ramplify.ramp.builders — POST /v1/deploy/<slug>
+      # Required: file. Optional: description, git_commit_sha, git_commit_message,
+      # enable_database, has_snowflake_access, env_vars, runtime.
+      # Env vars + database are managed in the Ramplify UI; we don't pass them here.
+      - name: Deploy to Ramplify
+        env:
+          RAMPLIFY_DEPLOY_KEY: ${{ secrets.RAMPLIFY_DEPLOY_KEY }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          GIT_REF: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RAMPLIFY_DEPLOY_KEY}" ]; then
+            echo "::error::RAMPLIFY_DEPLOY_KEY secret is not set."
+            exit 1
+          fi
+
+          # Write the commit message to a file so curl can load it without
+          # shell-escaping issues (handles quotes, backticks, newlines, etc.).
+          printf '%s' "${GIT_COMMIT_MESSAGE:-}" > /tmp/ramplify-commit-msg.txt
+          printf '%s' "FORGE deploy from ${REPO}@${GIT_REF} (${GIT_SHA:0:7})" > /tmp/ramplify-description.txt
+
+          echo "Deploying to https://ramplify.ramp.builders/v1/deploy/${RAMPLIFY_APP_SLUG}"
+          echo "  commit: ${GIT_SHA}"
+          echo "  ref:    ${GIT_REF}"
+
+          curl -fsS --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${RAMPLIFY_DEPLOY_KEY}" \
+            -F "file=@app.zip" \
+            -F "git_commit_sha=${GIT_SHA}" \
+            -F "git_commit_message=</tmp/ramplify-commit-msg.txt" \
+            -F "description=</tmp/ramplify-description.txt" \
+            "https://ramplify.ramp.builders/v1/deploy/${RAMPLIFY_APP_SLUG}"
+          echo
+          echo "Deploy request submitted."
