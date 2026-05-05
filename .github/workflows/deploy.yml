@@ -112,17 +112,32 @@ jobs:
           printf '%s' "${GIT_COMMIT_MESSAGE:-}" > /tmp/ramplify-commit-msg.txt
           printf '%s' "FORGE deploy from ${REPO}@${GIT_REF} (${GIT_SHA:0:7})" > /tmp/ramplify-description.txt
 
-          echo "Deploying to https://ramplify.ramp.builders/v1/deploy/${RAMPLIFY_APP_SLUG}"
+          DEPLOY_URL="https://ramplify.ramp.builders/v1/deploy/${RAMPLIFY_APP_SLUG}"
+          echo "Deploying to ${DEPLOY_URL}"
           echo "  commit: ${GIT_SHA}"
           echo "  ref:    ${GIT_REF}"
 
-          curl -fsS --show-error \
+          # Capture response body + status separately so we can surface Ramplify's
+          # error message on non-2xx (curl's -f flag would otherwise hide it).
+          HTTP_STATUS=$(curl --silent --show-error \
+            -o /tmp/ramplify-response.txt \
+            -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer ${RAMPLIFY_DEPLOY_KEY}" \
             -F "file=@app.zip" \
             -F "git_commit_sha=${GIT_SHA}" \
             -F "git_commit_message=</tmp/ramplify-commit-msg.txt" \
             -F "description=</tmp/ramplify-description.txt" \
-            "https://ramplify.ramp.builders/v1/deploy/${RAMPLIFY_APP_SLUG}"
+            "${DEPLOY_URL}")
+
+          echo "HTTP ${HTTP_STATUS}"
+          echo "--- response body ---"
+          cat /tmp/ramplify-response.txt || true
           echo
+          echo "--- end response body ---"
+
+          if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 300 ]; then
+            echo "::error::Ramplify rejected the deploy (HTTP ${HTTP_STATUS}). See response body above."
+            exit 1
+          fi
           echo "Deploy request submitted."
