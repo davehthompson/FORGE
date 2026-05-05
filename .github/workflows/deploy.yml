@@ -10,9 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Ramplify app identifier (UUID or human slug — whatever your app's deploy
-  # URL uses as the path segment). Update if Ramplify shows a different slug.
-  RAMPLIFY_APP_SLUG: 019df84b-d1d0-739d-9077-69050f6c4699
+  # Ramplify app slug — the path segment used in the deploy URL.
+  # Confirmed from the Ramplify dashboard: https://ramplify.ramp.builders/v1/deploy/forge2
+  RAMPLIFY_APP_SLUG: forge2
   NODE_VERSION: '20'
 
 jobs:
