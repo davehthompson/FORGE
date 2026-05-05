@@ -8,6 +8,18 @@ export function isTestDomain(domain: string): boolean {
   return clean === TEST_DOMAIN;
 }
 
+function buildMockLogoUrl(): string {
+  const token = process.env.LOGO_DEV_KEY ?? '';
+  const params = new URLSearchParams({
+    token,
+    size: '128',
+    format: 'png',
+    retina: 'true',
+    fallback: 'monogram',
+  });
+  return `https://img.logo.dev/ramp.com?${params.toString()}`;
+}
+
 export function getMockCompanyProfile(): CompanyProfile {
   return {
     name: 'Ramp',
@@ -16,7 +28,7 @@ export function getMockCompanyProfile(): CompanyProfile {
     employeeCount: '1,200',
     industry: 'Financial Technology',
     location: '29 W 23rd St, New York, NY 10010, United States',
-    logo: 'https://img.logo.dev/ramp.com?token=pk_AxloykzTSi-S1pEaFbM7Lg&size=128&format=png&retina=true&fallback=monogram',
+    logo: buildMockLogoUrl(),
     spendingCategories: [
       'Cloud Infrastructure & Hosting',
       'Software Subscriptions & SaaS',
