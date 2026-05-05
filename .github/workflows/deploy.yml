@@ -56,26 +56,36 @@ jobs:
         run: npm run build
 
       # ---- Package ----
-      # Ship source + built artifacts. Ramplify will reinstall prod deps from
-      # the lockfiles (root postinstall cascades into server).
+      # Stage into a clean directory with rsync so excludes are reliable
+      # (zip's -x globbing doesn't always handle nested patterns like **/node_modules
+      # the way you'd expect). Ship source + built artifacts. Ramplify reinstalls
+      # prod deps from the lockfiles via root postinstall.
       - name: Create deploy zip
         run: |
           set -euxo pipefail
-          zip -r app.zip . \
-            -x '.git/*' \
-            -x '.github/*' \
-            -x 'node_modules/*' \
-            -x '*/node_modules/*' \
-            -x '**/node_modules/*' \
-            -x '.env' '*/.env' '**/.env' \
-            -x '.env.local' '*/.env.local' '**/.env.local' \
-            -x '.env.*.local' '*/.env.*.local' '**/.env.*.local' \
-            -x '.vercel/*' \
-            -x '.DS_Store' '**/.DS_Store' \
-            -x '*.zip' \
-            -x 'coverage/*' '**/coverage/*' \
-            -x 'tests/*' '**/__tests__/*' \
-            -x '*.log' '**/*.log'
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='node_modules/' \
+            --exclude='.env' \
+            --exclude='.env.local' \
+            --exclude='.env.*.local' \
+            --exclude='.vercel/' \
+            --exclude='.DS_Store' \
+            --exclude='*.zip' \
+            --exclude='*.log' \
+            --exclude='coverage/' \
+            --exclude='__tests__/' \
+            --exclude='tests/' \
+            --exclude='chromium-pack.tar' \
+            ./ ../ramplify-stage/
+
+          echo "Staged size:"
+          du -sh ../ramplify-stage
+          echo "Top-level breakdown:"
+          du -sh ../ramplify-stage/* ../ramplify-stage/.* 2>/dev/null | sort -h | tail -20
+
+          (cd ../ramplify-stage && zip -rq "$GITHUB_WORKSPACE/app.zip" .)
           ls -lh app.zip
 
       # ---- Deploy ----
