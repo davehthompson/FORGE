@@ -10,9 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Change this to match your Ramplify app slug.
-  # (Or move to a repo-level GitHub Actions Variable: vars.RAMPLIFY_APP_SLUG)
-  RAMPLIFY_APP_SLUG: forge
+  # Ramplify app identifier (UUID or human slug — whatever your app's deploy
+  # URL uses as the path segment). Update if Ramplify shows a different slug.
+  RAMPLIFY_APP_SLUG: 019df84b-d1d0-739d-9077-69050f6c4699
   NODE_VERSION: '20'
 
 jobs:
