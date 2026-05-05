@@ -1,18 +1,18 @@
+// CRITICAL: must be the first import — populates process.env before any
+// other module body runs and captures env vars. See loadEnv.ts for context.
+import './loadEnv.js';
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { enrichRouter } from './routes/enrich.js';
 import { generateRouter } from './routes/generate.js';
-import { exportRouter } from './routes/export.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { v1Router } from './routes/v1.js';
 import { apiKeyAuth } from './middleware/apiKey.js';
 import { formatErrorResponse } from './services/claude.js';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -27,7 +27,6 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/enrich', enrichRouter);
 app.use('/api/generate', generateRouter);
-app.use('/api/export', exportRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/v1', apiKeyAuth, v1Router);
 

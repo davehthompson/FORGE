@@ -1,4 +1,6 @@
-import { neon } from '@neondatabase/serverless';
+import pg from 'pg';
+
+const { Pool } = pg;
 
 export interface GenerationEvent {
   assetType: string;
@@ -10,25 +12,49 @@ export interface GenerationEvent {
   apiService?: string;
 }
 
-let sql: ReturnType<typeof neon> | null = null;
+let pool: pg.Pool | null = null;
 let tableReady = false;
 
-function getClient() {
-  if (!sql) {
-    const url = process.env.DATABASE_URL;
-    if (!url) return null;
-    sql = neon(url);
-  }
-  return sql;
+/**
+ * Returns true if the env var looks like a real Postgres URL — guards against
+ * the literal `your_neon_postgres_connection_string_here` placeholder leaking
+ * into a real `neon()`/`Pool()` constructor and crashing the request.
+ */
+function isUsableConnectionString(url: string | undefined): url is string {
+  if (!url) return false;
+  if (url.startsWith('your_')) return false;
+  return /^postgres(ql)?:\/\//.test(url);
 }
 
-async function ensureTable() {
-  if (tableReady) return;
-  const client = getClient();
-  if (!client) return;
+function getPool(): pg.Pool | null {
+  if (pool) return pool;
+
+  const url = process.env.DATABASE_URL;
+  if (!isUsableConnectionString(url)) return null;
+
+  // Managed Postgres providers (Ramplify, Neon, RDS, etc.) all require SSL.
+  // Local dev against a plain Postgres on localhost/127.0.0.1 should not.
+  const isLocal = /@(localhost|127\.0\.0\.1)/.test(url);
+
+  pool = new Pool({
+    connectionString: url,
+    ssl: isLocal ? false : { rejectUnauthorized: false },
+  });
+
+  pool.on('error', (err) => {
+    console.error('Analytics: idle pg client error', err);
+  });
+
+  return pool;
+}
+
+async function ensureTable(): Promise<pg.Pool | null> {
+  const client = getPool();
+  if (!client) return null;
+  if (tableReady) return client;
 
   try {
-    await client`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS generation_events (
         id SERIAL PRIMARY KEY,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -40,27 +66,36 @@ async function ensureTable() {
         flow_type TEXT NOT NULL DEFAULT 'standard',
         api_service TEXT NOT NULL DEFAULT ''
       )
-    `;
-    await client`
+    `);
+    await client.query(`
       ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS api_service TEXT NOT NULL DEFAULT ''
-    `;
+    `);
     tableReady = true;
+    return client;
   } catch (err) {
     console.error('Analytics: failed to create table', err);
+    return null;
   }
 }
 
 export function trackGeneration(event: GenerationEvent): void {
-  const client = getClient();
-  if (!client) return;
-
   ensureTable()
-    .then(() => {
+    .then((client) => {
       if (!client) return;
-      return client`
-        INSERT INTO generation_events (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service)
-        VALUES (${event.assetType}, ${event.spendingCategory}, ${event.companyName}, ${event.companyDomain}, ${event.currency}, ${event.flowType}, ${event.apiService ?? ''})
-      `;
+      return client.query(
+        `INSERT INTO generation_events
+          (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          event.assetType,
+          event.spendingCategory,
+          event.companyName,
+          event.companyDomain,
+          event.currency,
+          event.flowType,
+          event.apiService ?? '',
+        ],
+      );
     })
     .catch((err) => {
       console.error('Analytics: tracking failed', err);
@@ -68,76 +103,88 @@ export function trackGeneration(event: GenerationEvent): void {
 }
 
 export async function getAnalyticsSummary() {
-  const client = getClient();
-  if (!client) return { total: 0, byType: [] as { type: string; count: number }[], byCategory: [] as { category: string; count: number }[] };
+  const empty = {
+    total: 0,
+    byType: [] as { type: string; count: number }[],
+    byCategory: [] as { category: string; count: number }[],
+  };
 
-  await ensureTable();
+  const client = await ensureTable();
+  if (!client) return empty;
 
-  const totalRows = await client`SELECT COUNT(*)::int AS total FROM generation_events`;
-  const typeRows = await client`SELECT asset_type, COUNT(*)::int AS count FROM generation_events GROUP BY asset_type ORDER BY count DESC`;
-  const categoryRows = await client`SELECT spending_category, COUNT(*)::int AS count FROM generation_events WHERE spending_category != '' GROUP BY spending_category ORDER BY count DESC`;
-
-  const total = (totalRows as Record<string, unknown>[])[0]?.total as number ?? 0;
+  const totalRows = await client.query<{ total: number }>(
+    `SELECT COUNT(*)::int AS total FROM generation_events`,
+  );
+  const typeRows = await client.query<{ asset_type: string; count: number }>(
+    `SELECT asset_type, COUNT(*)::int AS count
+     FROM generation_events
+     GROUP BY asset_type
+     ORDER BY count DESC`,
+  );
+  const categoryRows = await client.query<{ spending_category: string; count: number }>(
+    `SELECT spending_category, COUNT(*)::int AS count
+     FROM generation_events
+     WHERE spending_category != ''
+     GROUP BY spending_category
+     ORDER BY count DESC`,
+  );
 
   return {
-    total,
-    byType: (typeRows as Record<string, unknown>[]).map((r) => ({
-      type: r.asset_type as string,
-      count: r.count as number,
-    })),
-    byCategory: (categoryRows as Record<string, unknown>[]).map((r) => ({
-      category: r.spending_category as string,
-      count: r.count as number,
+    total: totalRows.rows[0]?.total ?? 0,
+    byType: typeRows.rows.map((r) => ({ type: r.asset_type, count: r.count })),
+    byCategory: categoryRows.rows.map((r) => ({
+      category: r.spending_category,
+      count: r.count,
     })),
   };
 }
 
 export async function getAnalyticsCompanies() {
-  const client = getClient();
+  const client = await ensureTable();
   if (!client) return [];
 
-  await ensureTable();
-
-  const rows = await client`
-    SELECT company_name, company_domain, COUNT(*)::int AS count, MAX(created_at)::text AS last_used
+  const rows = await client.query<{
+    company_name: string;
+    company_domain: string;
+    count: number;
+    last_used: string;
+  }>(`
+    SELECT company_name, company_domain, COUNT(*)::int AS count,
+           MAX(created_at)::text AS last_used
     FROM generation_events
     WHERE company_name != ''
     GROUP BY company_name, company_domain
     ORDER BY count DESC
-  `;
+  `);
 
-  return (rows as Record<string, unknown>[]).map((r) => ({
-    name: r.company_name as string,
-    domain: r.company_domain as string,
-    count: r.count as number,
-    lastUsed: r.last_used as string,
+  return rows.rows.map((r) => ({
+    name: r.company_name,
+    domain: r.company_domain,
+    count: r.count,
+    lastUsed: r.last_used,
   }));
 }
 
 export async function getAnalyticsTimeline(days: number = 30) {
-  const client = getClient();
+  const client = await ensureTable();
   if (!client) return [];
 
-  await ensureTable();
+  const rows = await client.query<{ date: string; count: number }>(
+    `SELECT d::date::text AS date, COALESCE(e.count, 0)::int AS count
+     FROM generate_series(
+       CURRENT_DATE - $1::int + 1,
+       CURRENT_DATE,
+       '1 day'::interval
+     ) AS d
+     LEFT JOIN (
+       SELECT DATE(created_at) AS event_date, COUNT(*)::int AS count
+       FROM generation_events
+       WHERE created_at >= CURRENT_DATE - $1::int + 1
+       GROUP BY DATE(created_at)
+     ) e ON e.event_date = d::date
+     ORDER BY date ASC`,
+    [days],
+  );
 
-  const rows = await client`
-    SELECT d::date::text AS date, COALESCE(e.count, 0)::int AS count
-    FROM generate_series(
-      CURRENT_DATE - ${days} + 1,
-      CURRENT_DATE,
-      '1 day'::interval
-    ) AS d
-    LEFT JOIN (
-      SELECT DATE(created_at) AS event_date, COUNT(*)::int AS count
-      FROM generation_events
-      WHERE created_at >= CURRENT_DATE - ${days} + 1
-      GROUP BY DATE(created_at)
-    ) e ON e.event_date = d::date
-    ORDER BY date ASC
-  `;
-
-  return (rows as Record<string, unknown>[]).map((r) => ({
-    date: r.date as string,
-    count: r.count as number,
-  }));
+  return rows.rows.map((r) => ({ date: r.date, count: r.count }));
 }

@@ -39,9 +39,6 @@ Thumbs.db
 # Vercel
 .vercel/
 
-# Chromium binary (generated at build time by server postinstall)
-client/public/chromium-pack.tar
-
 # Misc
 *.local
 .vercel

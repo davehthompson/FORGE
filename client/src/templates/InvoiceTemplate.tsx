@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { InvoiceData } from '../types';
 import { getLogoUrl } from '../utils/logo';
+import { resolveCompanyDomain } from '../utils/domain';
 import { useLogoColors, getLighterColor, getColorWithOpacity } from '../hooks/useLogoColors';
 import { formatWithSymbol } from '../utils/currencies';
+import { CompanyLogo } from '../components/ui';
 
 interface InvoiceTemplateProps {
   data: InvoiceData;
@@ -14,8 +17,16 @@ export function InvoiceTemplate({ data, scale = 1, currency = 'USD' }: InvoiceTe
   const formatCurrency = (amount: number): string => {
     return formatWithSymbol(amount, currency);
   };
-  const vendorLogoUrl = data.vendor.domain ? getLogoUrl(data.vendor.domain, { size: 64 }) : null;
-  const logoColors = useLogoColors(vendorLogoUrl);
+  const vendorDomain = resolveCompanyDomain({
+    domain: data.vendor.domain,
+    email: data.vendor.email,
+  });
+  const vendorLogoUrl = vendorDomain ? getLogoUrl(vendorDomain, { size: 64 }) : null;
+  // Track which URL the logo actually loaded from (Logo.dev may 404, in which
+  // case CompanyLogo falls back to Clearbit/Google). useLogoColors needs that
+  // real URL so the extracted accent color matches the displayed image.
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(vendorLogoUrl);
+  const logoColors = useLogoColors(resolvedLogoUrl);
 
   // Use logo colors or fall back to defaults
   const accentColor = logoColors?.primary || '#3D3D3D';
@@ -41,16 +52,13 @@ export function InvoiceTemplate({ data, scale = 1, currency = 'USD' }: InvoiceTe
       <div className="flex justify-between items-start mb-10">
         <div className="flex items-start gap-4">
           {vendorLogoUrl && (
-            <img 
-              src={vendorLogoUrl} 
-              alt={`${data.vendor.name} logo`}
-              className="w-16 h-16 object-contain rounded-lg"
-              style={{ 
-                border: `2px solid ${accentBorderColor}`,
-              }}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
+            <CompanyLogo
+              src={vendorLogoUrl}
+              name={data.vendor.name}
+              size={64}
+              className="rounded-lg"
+              style={{ border: `2px solid ${accentBorderColor}` }}
+              onLoaded={setResolvedLogoUrl}
             />
           )}
           <div>

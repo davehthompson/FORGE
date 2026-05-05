@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { ReceiptData } from '../types';
 import { getLogoUrl } from '../utils/logo';
+import { normalizeDomain } from '../utils/domain';
 import { useLogoColors, getColorWithOpacity } from '../hooks/useLogoColors';
 import { formatWithSymbol } from '../utils/currencies';
+import { CompanyLogo } from '../components/ui';
 
 interface ReceiptTemplateProps {
   data: ReceiptData;
@@ -14,8 +17,10 @@ export function ReceiptTemplate({ data, scale = 1, currency = 'USD' }: ReceiptTe
   const formatCurrency = (amount: number): string => {
     return formatWithSymbol(amount, currency);
   };
-  const vendorLogoUrl = data.vendor.domain ? getLogoUrl(data.vendor.domain, { size: 48 }) : null;
-  const logoColors = useLogoColors(vendorLogoUrl);
+  const vendorDomain = normalizeDomain(data.vendor.domain);
+  const vendorLogoUrl = vendorDomain ? getLogoUrl(vendorDomain, { size: 48 }) : null;
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(vendorLogoUrl);
+  const logoColors = useLogoColors(resolvedLogoUrl);
 
   // Use logo colors or fall back to defaults
   const accentColor = logoColors?.primary || '#3D3D3D';
@@ -40,13 +45,12 @@ export function ReceiptTemplate({ data, scale = 1, currency = 'USD' }: ReceiptTe
         style={{ borderBottom: `2px dashed ${accentBorderColor}` }}
       >
         {vendorLogoUrl && (
-          <img 
-            src={vendorLogoUrl} 
-            alt={`${data.vendor.name} logo`}
-            className="w-12 h-12 object-contain mx-auto mb-2 rounded"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
+          <CompanyLogo
+            src={vendorLogoUrl}
+            name={data.vendor.name}
+            size={48}
+            className="mx-auto mb-2 rounded"
+            onLoaded={setResolvedLogoUrl}
           />
         )}
         <h1 

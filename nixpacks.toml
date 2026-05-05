@@ -1,0 +1,11 @@
+[phases.setup]
+aptPkgs = ["fonts-liberation"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node server/dist/index.js"

@@ -4,4 +4,5 @@ export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 export { Badge } from './Badge';
 export { Checkbox } from './Checkbox';
 export { Logo, LogoMark } from './Logo';
+export { CompanyLogo } from './CompanyLogo';
 export { Spinner } from './Spinner';

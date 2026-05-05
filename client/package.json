@@ -16,6 +16,8 @@
     "fabric": "^7.1.0",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.563.0",
+    "pdf-lib": "^1.17.1",
+    "piexifjs": "^1.0.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0",

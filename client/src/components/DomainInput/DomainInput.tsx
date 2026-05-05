@@ -2,41 +2,44 @@ import { useState, type FormEvent } from 'react';
 import { Globe, ArrowRight, ArrowLeft, AlertCircle } from 'lucide-react';
 import { Button, Input, Card, CardContent } from '../ui';
 import { useStore } from '../../hooks/useStore';
-import { enrichCompany } from '../../services/api';
+import { enrichCompanyStreaming } from '../../services/api';
 
 export function DomainInput() {
   const [domain, setDomain] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const { setCompany, setStep, setIsLoading, isLoading } = useStore();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    setStatus(null);
 
     if (!domain.trim()) {
       setError('Please enter a domain');
       return;
     }
 
-    // Basic domain validation
     const domainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
     const cleanDomain = domain.trim().replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0];
-    
+
     if (!domainPattern.test(cleanDomain)) {
       setError('Please enter a valid domain (e.g., example.com)');
       return;
     }
 
     setIsLoading(true);
+    setStatus('Connecting...');
 
     try {
-      const company = await enrichCompany(cleanDomain);
+      const company = await enrichCompanyStreaming(cleanDomain, (next) => setStatus(next));
       setCompany(company);
       setStep('summary');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch company data');
     } finally {
       setIsLoading(false);
+      setStatus(null);
     }
   };
 
@@ -82,6 +85,7 @@ export function DomainInput() {
               fullWidth
               size="lg"
               isLoading={isLoading}
+              loadingText={status ?? 'Connecting...'}
               className="group"
             >
               <span>Analyze Company</span>

@@ -1,5 +1,5 @@
-import { Building2, Users, MapPin, DollarSign, ArrowRight, ArrowLeft } from 'lucide-react';
-import { Button, Card, CardContent, Badge } from '../ui';
+import { Users, MapPin, DollarSign, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Button, Card, CardContent, Badge, CompanyLogo } from '../ui';
 import { useStore } from '../../hooks/useStore';
 
 export function CompanySummary() {
@@ -15,20 +15,11 @@ export function CompanySummary() {
         <CardContent>
           {/* Header with logo */}
           <div className="flex items-start gap-4 mb-6">
-            {company.logo ? (
-              <img
-                src={company.logo}
-                alt={`${company.name} logo`}
-                className="w-16 h-16 rounded-lg object-contain bg-white border border-ramp-stone"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              <div className="w-16 h-16 rounded-lg bg-ramp-sand flex items-center justify-center">
-                <Building2 className="w-8 h-8 text-ramp-slate" />
-              </div>
-            )}
+            <CompanyLogo
+              src={company.logo}
+              name={company.name}
+              size={64}
+            />
             <div className="flex-1">
               <h1 className="text-2xl font-bold text-ramp-slate">{company.name}</h1>
               <p className="text-ramp-sage">{company.domain}</p>

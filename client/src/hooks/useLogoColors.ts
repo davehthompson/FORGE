@@ -144,6 +144,27 @@ export function getCachedLogoColor(logoUrl: string): LogoColors | null {
 }
 
 /**
+ * Get a cached logo color for a given company domain. Scans the cache for any
+ * URL that contains the (cleaned) domain — covers Logo.dev, Clearbit, Google
+ * favicon, and any future provider without coupling this lookup to a specific
+ * URL shape. Useful at PDF export time, when we only know the domain and
+ * don't know which fallback source actually loaded in the editor.
+ */
+export function getCachedLogoColorForDomain(domain: string): LogoColors | null {
+  if (!domain) return null;
+  const clean = domain
+    .replace(/^(https?:\/\/)?(www\.)?/, '')
+    .split('/')[0]
+    .toLowerCase();
+  if (!clean) return null;
+
+  for (const [url, colors] of colorCache.entries()) {
+    if (url.toLowerCase().includes(clean)) return colors;
+  }
+  return null;
+}
+
+/**
  * Get a lighter version of the color for backgrounds
  */
 export function getLighterColor(rgb: [number, number, number], amount: number = 0.9): string {

@@ -10,6 +10,7 @@ export function isTestDomain(domain: string): boolean {
 
 function buildMockLogoUrl(): string {
   const token = process.env.LOGO_DEV_KEY ?? '';
+  if (!token) return '';
   const params = new URLSearchParams({
     token,
     size: '128',

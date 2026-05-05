@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { AirlineReceiptData } from '../types';
 import { getLogoUrl } from '../utils/logo';
+import { normalizeDomain } from '../utils/domain';
 import { useLogoColors, getLighterColor, getColorWithOpacity } from '../hooks/useLogoColors';
 import { formatWithSymbol } from '../utils/currencies';
+import { CompanyLogo } from '../components/ui';
 import { Plane, Calendar, User, CreditCard } from 'lucide-react';
 
 interface AirlineReceiptTemplateProps {
@@ -15,8 +18,10 @@ export function AirlineReceiptTemplate({ data, scale = 1, currency = 'USD' }: Ai
     return formatWithSymbol(amount, currency);
   };
 
-  const airlineLogoUrl = data.airline.domain ? getLogoUrl(data.airline.domain, { size: 80 }) : null;
-  const logoColors = useLogoColors(airlineLogoUrl);
+  const airlineDomain = normalizeDomain(data.airline.domain);
+  const airlineLogoUrl = airlineDomain ? getLogoUrl(airlineDomain, { size: 80 }) : null;
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(airlineLogoUrl);
+  const logoColors = useLogoColors(resolvedLogoUrl);
 
   const accentColor = logoColors?.primary || '#0033a0';
   const accentBgColor = logoColors 
@@ -41,11 +46,12 @@ export function AirlineReceiptTemplate({ data, scale = 1, currency = 'USD' }: Ai
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {airlineLogoUrl && (
-              <img 
-                src={airlineLogoUrl} 
-                alt={`${data.airline.name} logo`}
-                className="w-10 h-10 object-contain bg-white rounded p-1"
-                crossOrigin="anonymous"
+              <CompanyLogo
+                src={airlineLogoUrl}
+                name={data.airline.name}
+                size={40}
+                className="bg-white rounded p-1"
+                onLoaded={setResolvedLogoUrl}
               />
             )}
             <span className="text-white font-bold text-xl">{data.airline.name}</span>

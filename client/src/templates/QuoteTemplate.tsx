@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { QuoteData } from '../types';
 import { getLogoUrl } from '../utils/logo';
+import { resolveCompanyDomain } from '../utils/domain';
 import { useLogoColors, getLighterColor, getColorWithOpacity } from '../hooks/useLogoColors';
 import { formatWithSymbol } from '../utils/currencies';
+import { CompanyLogo } from '../components/ui';
 
 interface QuoteTemplateProps {
   data: QuoteData;
@@ -14,8 +17,13 @@ export function QuoteTemplate({ data, scale = 1, currency = 'USD' }: QuoteTempla
   const formatCurrency = (amount: number): string => {
     return formatWithSymbol(amount, currency);
   };
-  const vendorLogoUrl = data.vendor.domain ? getLogoUrl(data.vendor.domain, { size: 64 }) : null;
-  const logoColors = useLogoColors(vendorLogoUrl);
+  const vendorDomain = resolveCompanyDomain({
+    domain: data.vendor.domain,
+    email: data.vendor.email,
+  });
+  const vendorLogoUrl = vendorDomain ? getLogoUrl(vendorDomain, { size: 64 }) : null;
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(vendorLogoUrl);
+  const logoColors = useLogoColors(resolvedLogoUrl);
 
   // Use logo colors or fall back to defaults
   const accentColor = logoColors?.primary || '#3D3D3D';
@@ -41,14 +49,13 @@ export function QuoteTemplate({ data, scale = 1, currency = 'USD' }: QuoteTempla
       <div className="flex justify-between items-start mb-10">
         <div className="flex items-start gap-4">
           {vendorLogoUrl && (
-            <img 
-              src={vendorLogoUrl} 
-              alt={`${data.vendor.name} logo`}
-              className="w-16 h-16 object-contain rounded-lg"
+            <CompanyLogo
+              src={vendorLogoUrl}
+              name={data.vendor.name}
+              size={64}
+              className="rounded-lg"
               style={{ border: `2px solid ${accentBorderColor}` }}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
+              onLoaded={setResolvedLogoUrl}
             />
           )}
           <div>

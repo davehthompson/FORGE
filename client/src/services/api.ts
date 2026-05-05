@@ -79,6 +79,70 @@ export async function enrichCompany(domain: string): Promise<CompanyProfile> {
   }
 }
 
+// Company enrichment with streaming status updates (Claude + web_search)
+export async function enrichCompanyStreaming(
+  domain: string,
+  onStatus: (status: string) => void,
+): Promise<CompanyProfile> {
+  const response = await fetch('/api/enrich/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  });
+
+  if (!response.ok) {
+    throw await errorFromFetchResponse(response, 'Failed to enrich company data');
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw createApiError('No response body');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: CompanyProfile | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let currentEvent = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7);
+      } else if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        try {
+          const parsed = JSON.parse(data);
+
+          if (currentEvent === 'status' && parsed.status) {
+            onStatus(parsed.status);
+          } else if (currentEvent === 'complete' && parsed.data) {
+            result = parsed.data as CompanyProfile;
+          } else if (currentEvent === 'error' && parsed.error) {
+            throw createApiError(parsed.error, parsed.code);
+          }
+        } catch (e) {
+          if (e instanceof SyntaxError) continue;
+          throw e;
+        }
+      }
+    }
+  }
+
+  if (!result) {
+    throw createApiError('No company profile received from enrichment');
+  }
+
+  return result;
+}
+
 // Asset generation (non-streaming)
 export async function generateAsset(
   type: AssetType,
@@ -571,49 +635,9 @@ export async function generateAssets(
   return results as Record<AssetType, AssetData>;
 }
 
-// Export as PDF
-export async function exportPdf(
-  type: AssetType,
-  data: AssetData,
-  currency: string = 'USD',
-  primaryColor?: string
-): Promise<Blob> {
-  const response = await api.post(
-    '/export/pdf',
-    { type, data, currency, primaryColor },
-    { responseType: 'blob' }
-  );
-  
-  return response.data;
-}
-
-// Export as JPG
-export async function exportJpg(
-  type: AssetType,
-  data: AssetData,
-  currency: string = 'USD',
-  primaryColor?: string
-): Promise<Blob> {
-  const response = await api.post(
-    '/export/jpg',
-    { type, data, currency, primaryColor },
-    { responseType: 'blob' }
-  );
-  
-  return response.data;
-}
-
-// Download helper
-export function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+// PDF/JPG export now happens entirely client-side — see services/capture.ts.
+// The previous server-rendered Puppeteer pipeline was removed along with the
+// chromium download to keep the deploy lean.
 
 // Gemini receipt image generation (Nano Banana)
 export async function generateReceiptImage(

@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { HotelFolioData } from '../types';
 import { getLogoUrl } from '../utils/logo';
+import { normalizeDomain } from '../utils/domain';
 import { useLogoColors, getLighterColor, getColorWithOpacity } from '../hooks/useLogoColors';
 import { formatWithSymbol } from '../utils/currencies';
+import { CompanyLogo } from '../components/ui';
 
 interface HotelFolioTemplateProps {
   data: HotelFolioData;
@@ -14,8 +17,10 @@ export function HotelFolioTemplate({ data, scale = 1, currency = 'USD' }: HotelF
     return formatWithSymbol(amount, currency);
   };
 
-  const hotelLogoUrl = data.hotel.domain ? getLogoUrl(data.hotel.domain, { size: 80 }) : null;
-  const logoColors = useLogoColors(hotelLogoUrl);
+  const hotelDomain = normalizeDomain(data.hotel.domain);
+  const hotelLogoUrl = hotelDomain ? getLogoUrl(hotelDomain, { size: 80 }) : null;
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(hotelLogoUrl);
+  const logoColors = useLogoColors(resolvedLogoUrl);
 
   const accentColor = logoColors?.primary || '#1a365d';
   const accentBgColor = logoColors 
@@ -44,11 +49,11 @@ export function HotelFolioTemplate({ data, scale = 1, currency = 'USD' }: HotelF
       <div className="flex justify-between items-start mb-8 pb-6" style={{ borderBottom: `2px solid ${accentColor}` }}>
         <div className="flex items-start gap-4">
           {hotelLogoUrl && (
-            <img 
-              src={hotelLogoUrl} 
-              alt={`${data.hotel.name} logo`}
-              className="w-16 h-16 object-contain"
-              crossOrigin="anonymous"
+            <CompanyLogo
+              src={hotelLogoUrl}
+              name={data.hotel.name}
+              size={64}
+              onLoaded={setResolvedLogoUrl}
             />
           )}
           <div>

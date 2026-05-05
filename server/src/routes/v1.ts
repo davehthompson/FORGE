@@ -1,21 +1,17 @@
 import { Router, Request, Response } from 'express';
-import archiver from 'archiver';
 import {
   generateAssetContent,
   generateAssetContentStreaming,
   generateQuickReceiptContent,
   formatErrorResponse,
 } from '../services/claude.js';
-import { generatePdf, generateJpg } from '../services/pdf.js';
 import { enrichCompanyFromDomain } from '../services/enrichment.js';
 import { trackGeneration } from '../services/analytics.js';
-import { buildFilename } from '../utils/filename.js';
 import { generateInvoiceSplits } from '../utils/invoiceSplits.js';
 import {
   GENERATE_TYPES,
   RECEIPT_TYPES,
   BUNDLE_ASSETS,
-  EXPORT_FORMATS,
   CURRENCIES,
   validateEnum,
   validateEnumOptional,
@@ -26,6 +22,7 @@ import {
   CompanyProfile,
   QuoteData,
   ContractData,
+  InvoiceData,
   InvoiceConfig,
   RelatedAssetContext,
 } from '../types.js';
@@ -33,25 +30,15 @@ import {
 export const v1Router = Router();
 
 // ---------------------------------------------------------------------------
-// Helpers
+// v1 is a JSON-only API.
+//
+// As of the chromium-removal pass, server-side PDF/JPG rendering no longer
+// exists. v1 endpoints return the structured AssetData (or a bundle of
+// AssetData) and any consumer that wants a visual file is expected to render
+// it client-side (the dashboard does this via services/capture.ts).
 // ---------------------------------------------------------------------------
 
 function noopStatus(_status: string): void {}
-
-async function renderAsset(
-  type: AssetType,
-  data: AssetData,
-  format: string,
-  currency: string,
-  primaryColor?: string,
-): Promise<{ buffer: Buffer; contentType: string }> {
-  if (format === 'jpg') {
-    const buffer = await generateJpg(type, data, currency, primaryColor);
-    return { buffer, contentType: 'image/jpeg' };
-  }
-  const buffer = await generatePdf(type, data, currency, primaryColor);
-  return { buffer, contentType: 'application/pdf' };
-}
 
 function collectErrors(errors: (string | null)[]): string[] {
   return errors.filter((e): e is string => e !== null);
@@ -63,17 +50,15 @@ function collectErrors(errors: (string | null)[]): string[] {
 
 v1Router.post('/generate', async (req: Request, res: Response) => {
   try {
-    const { type, domain, spendingCategory, currency = 'USD', format = 'pdf', lineItemCount } = req.body;
+    const { type, domain, spendingCategory, currency = 'USD', lineItemCount } = req.body;
 
     const errors = collectErrors([
       validateEnum(type, GENERATE_TYPES, 'type'),
       validateEnum(domain, ['__any__'], 'domain'),
       validateEnum(spendingCategory, ['__any__'], 'spendingCategory'),
       validateEnumOptional(currency, CURRENCIES, 'currency'),
-      validateEnumOptional(format, EXPORT_FORMATS, 'format'),
     ]);
 
-    // domain and spendingCategory are free-form — just check presence
     if (!domain || typeof domain !== 'string') {
       errors.push('"domain" is required and must be a string');
     }
@@ -86,22 +71,28 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
         errors.push('"lineItemCount" must be an integer between 1 and 10');
       }
     }
-    // Remove the __any__ false-positives
-    const realErrors = errors.filter(e => !e.includes('__any__'));
+    const realErrors = errors.filter((e) => !e.includes('__any__'));
 
     if (realErrors.length > 0) {
       return res.status(400).json({ success: false, error: realErrors.join('; ') });
     }
 
     const company = await enrichCompanyFromDomain(domain);
-    const data = await generateAssetContent(type as AssetType, company, spendingCategory, currency, lineItemCount);
-    const ext = format === 'jpg' ? 'jpg' : 'pdf';
-    const { buffer, contentType } = await renderAsset(type as AssetType, data, ext, currency);
-    const filename = buildFilename(type as AssetType, data, ext);
+    const data = await generateAssetContent(
+      type as AssetType,
+      company,
+      spendingCategory,
+      currency,
+      lineItemCount,
+    );
 
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(buffer);
+    res.json({
+      success: true,
+      type,
+      currency,
+      company: { name: company.name, domain: company.domain },
+      data,
+    });
 
     trackGeneration({
       assetType: type,
@@ -123,6 +114,12 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
 // POST /bundle  —  connected document set (quote + contract + N invoices)
 // ---------------------------------------------------------------------------
 
+interface BundlePayload {
+  quote?: QuoteData;
+  contract?: ContractData;
+  invoices: InvoiceData[];
+}
+
 v1Router.post('/bundle', async (req: Request, res: Response) => {
   try {
     const {
@@ -131,11 +128,9 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
       assets,
       invoiceCount = 2,
       currency = 'USD',
-      format = 'pdf',
       lineItemCount,
     } = req.body;
 
-    // --- validation ---
     const errors: string[] = [];
 
     if (!domain || typeof domain !== 'string') {
@@ -163,8 +158,6 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
 
     const currErr = validateEnumOptional(currency, CURRENCIES, 'currency');
     if (currErr) errors.push(currErr);
-    const fmtErr = validateEnumOptional(format, EXPORT_FORMATS, 'format');
-    if (fmtErr) errors.push(fmtErr);
     if (lineItemCount !== undefined) {
       const n = Number(lineItemCount);
       if (!Number.isInteger(n) || n < 1 || n > 10) {
@@ -178,22 +171,17 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
 
     const wantQuote = assets.includes('quote');
     const wantContract = assets.includes('contract');
-    const ext = format === 'jpg' ? 'jpg' : 'pdf';
 
-    // --- enrich company ---
     const company: CompanyProfile = await enrichCompanyFromDomain(domain);
 
-    // --- generate in order: quote -> contract -> invoices ---
-    const files: { name: string; buffer: Buffer }[] = [];
+    const bundle: BundlePayload = { invoices: [] };
     let quoteData: QuoteData | undefined;
     let contractData: ContractData | undefined;
 
-    // 1. Quote
     if (wantQuote) {
       const data = await generateAssetContent('quote', company, spendingCategory, currency, lineItemCount);
       quoteData = data as QuoteData;
-      const { buffer } = await renderAsset('quote', data, ext, currency);
-      files.push({ name: buildFilename('quote', data, ext), buffer });
+      bundle.quote = quoteData;
 
       trackGeneration({
         assetType: 'quote',
@@ -206,7 +194,6 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
       });
     }
 
-    // 2. Contract (linked to quote if available)
     if (wantContract) {
       const relatedAssets: RelatedAssetContext | undefined = quoteData ? { quote: quoteData } : undefined;
       const data = await generateAssetContentStreaming(
@@ -220,8 +207,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         lineItemCount,
       );
       contractData = data as ContractData;
-      const { buffer } = await renderAsset('contract', data, ext, currency);
-      files.push({ name: buildFilename('contract', data, ext), buffer });
+      bundle.contract = contractData;
 
       trackGeneration({
         assetType: 'contract',
@@ -234,7 +220,6 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
       });
     }
 
-    // 3. Invoices — split total from quote/contract
     const totalAmount = quoteData?.total || contractData?.totalValue || 10000;
     const splits = generateInvoiceSplits(count, totalAmount);
     let previousInvoicedAmount = 0;
@@ -274,12 +259,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         lineItemCount,
       );
 
-      const { buffer } = await renderAsset('invoice', data, ext, currency);
-      files.push({
-        name: buildFilename('invoice', data, ext, String(invoiceNumber)),
-        buffer,
-      });
-
+      bundle.invoices.push(data as InvoiceData);
       previousInvoicedAmount += targetSubtotal;
 
       trackGeneration({
@@ -293,22 +273,12 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
       });
     }
 
-    // --- zip all files and stream response ---
-    const vendorName = company.name.replace(/[^a-zA-Z0-9]/g, '_');
-    const today = new Date().toISOString().slice(0, 10);
-    const zipFilename = `Bundle_${vendorName}_${today}.zip`;
-
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`);
-
-    const archive = archiver('zip', { zlib: { level: 5 } });
-    archive.pipe(res);
-
-    for (const file of files) {
-      archive.append(file.buffer, { name: file.name });
-    }
-
-    await archive.finalize();
+    res.json({
+      success: true,
+      currency,
+      company: { name: company.name, domain: company.domain },
+      data: bundle,
+    });
   } catch (error) {
     console.error('[v1/bundle] error:', error);
     if (!res.headersSent) {
@@ -324,12 +294,11 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
 
 v1Router.post('/receipt', async (req: Request, res: Response) => {
   try {
-    const { prompt, receiptType, currency = 'USD', format = 'pdf' } = req.body;
+    const { prompt, receiptType, currency = 'USD' } = req.body;
 
     const errors = collectErrors([
       validateEnum(receiptType, RECEIPT_TYPES, 'receiptType'),
       validateEnumOptional(currency, CURRENCIES, 'currency'),
-      validateEnumOptional(format, EXPORT_FORMATS, 'format'),
     ]);
 
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -341,14 +310,13 @@ v1Router.post('/receipt', async (req: Request, res: Response) => {
     }
 
     const data = await generateQuickReceiptContent(prompt, receiptType, currency, noopStatus);
-    const assetType = receiptType as AssetType;
-    const ext = format === 'jpg' ? 'jpg' : 'pdf';
-    const { buffer, contentType } = await renderAsset(assetType, data, ext, currency);
-    const filename = buildFilename(assetType, data, ext);
 
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(buffer);
+    res.json({
+      success: true,
+      type: receiptType,
+      currency,
+      data: data as AssetData,
+    });
 
     trackGeneration({
       assetType: receiptType,

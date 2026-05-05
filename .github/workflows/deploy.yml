@@ -82,7 +82,6 @@ jobs:
             --exclude='coverage/' \
             --exclude='__tests__/' \
             --exclude='tests/' \
-            --exclude='chromium-pack.tar' \
             ./ ../ramplify-stage/
 
           echo "Staged size:"

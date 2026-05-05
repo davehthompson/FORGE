@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import crypto from 'crypto';
+import { jsonrepair } from 'jsonrepair';
 import {
   CompanyProfile,
   AssetType,
@@ -100,6 +101,45 @@ export function formatErrorResponse(err: unknown): {
   };
 }
 
+/**
+ * Run `op` and silently retry once on PARSE_ERROR. Used to insulate user-
+ * visible flows (enrichment) from the inevitable ~1% rate of LLM JSON
+ * malformations that even `jsonrepair` can't recover. The caller never sees
+ * the first failure; both attempts are logged for diagnostics so we can spot
+ * systemic issues in server logs.
+ *
+ * Only PARSE_ERROR is retried — TRUNCATED, AUTH_ERROR, TIMEOUT, and
+ * API_ERROR represent real, persistent problems where a retry would just
+ * compound the failure.
+ */
+async function withParseRetry<T>(
+  label: string,
+  op: (attempt: number) => Promise<T>,
+): Promise<T> {
+  try {
+    return await op(1);
+  } catch (firstErr) {
+    if (firstErr instanceof ClaudeError && firstErr.code === 'PARSE_ERROR') {
+      console.warn(
+        `[${label}] PARSE_ERROR on attempt 1 — retrying once. cause:`,
+        firstErr.cause instanceof Error ? firstErr.cause.message : firstErr.cause,
+      );
+      try {
+        return await op(2);
+      } catch (secondErr) {
+        if (secondErr instanceof ClaudeError && secondErr.code === 'PARSE_ERROR') {
+          console.error(
+            `[${label}] PARSE_ERROR on attempt 2 — giving up. cause:`,
+            secondErr.cause instanceof Error ? secondErr.cause.message : secondErr.cause,
+          );
+        }
+        throw secondErr;
+      }
+    }
+    throw firstErr;
+  }
+}
+
 function mapClaudeError(err: unknown): ClaudeError {
   if (err instanceof ClaudeError) return err;
   const e = err as {
@@ -158,10 +198,28 @@ function extractJSON<T = unknown>(
 ): T {
   const match = text.match(pattern);
   if (!match) throw new ClaudeError('PARSE_ERROR', 'No JSON found in response');
+  const raw = match[0];
+
+  // Fast path — if Claude returned strict JSON, parse and return.
   try {
-    return JSON.parse(match[0]) as T;
-  } catch (err) {
-    throw new ClaudeError('PARSE_ERROR', 'Failed to parse JSON from response', err);
+    return JSON.parse(raw) as T;
+  } catch (firstErr) {
+    // Slow path — common LLM mistakes (unescaped quotes/newlines inside
+    // string values, smart quotes from web_search results, trailing commas,
+    // single-quoted strings, code-fence wrappers). jsonrepair handles all of
+    // these without losing data. We swallow the first error and retry; if
+    // the repaired text still won't parse, throw with the ORIGINAL error so
+    // the cause stack points at the real syntax issue, not the repair attempt.
+    try {
+      const repaired = jsonrepair(raw);
+      return JSON.parse(repaired) as T;
+    } catch {
+      throw new ClaudeError(
+        'PARSE_ERROR',
+        'Failed to parse JSON from response (after repair attempt)',
+        firstErr,
+      );
+    }
   }
 }
 
@@ -169,9 +227,11 @@ interface CallOpts {
   system: string;
   user: string;
   maxTokens: number;
-  temperature?: number;
   tools?: Anthropic.Messages.ToolUnion[];
 }
+
+// NOTE: Opus 4.7 rejects `temperature` (returns 400 invalid_request_error
+// "`temperature` is deprecated for this model."). We deliberately omit it.
 
 async function callClaude(opts: CallOpts): Promise<{
   text: string;
@@ -184,7 +244,6 @@ async function callClaude(opts: CallOpts): Promise<{
       {
         model: MODEL,
         max_tokens: opts.maxTokens,
-        temperature: opts.temperature ?? 0.7,
         system: opts.system,
         messages: [{ role: 'user', content: opts.user }],
         ...(opts.tools ? { tools: opts.tools } : {}),
@@ -222,7 +281,6 @@ async function callClaudeStream(opts: StreamCallOpts): Promise<{
       {
         model: MODEL,
         max_tokens: opts.maxTokens,
-        temperature: opts.temperature ?? 0.7,
         system: opts.system,
         messages: [{ role: 'user', content: opts.user }],
         ...(opts.tools ? { tools: opts.tools } : {}),
@@ -1313,10 +1371,8 @@ Return ONLY a single JSON object with this exact shape (no markdown, no explanat
 
 If the company cannot be found via web search, generate a reasonable profile from your training knowledge of the domain. Always return valid JSON in the exact shape above.`;
 
-export async function enrichCompanyProfile(
-  cleanDomain: string,
-): Promise<EnrichedCompanyData> {
-  const userMessage = `Look up the company at the website domain "${cleanDomain}" and return their profile.
+function buildEnrichmentUserMessage(cleanDomain: string): string {
+  return `Look up the company at the website domain "${cleanDomain}" and return their profile.
 
 Search for:
 1. Their company name and what they do (description)
@@ -1327,31 +1383,144 @@ Search for:
 Then identify the 5-7 most likely B2B spending categories this specific company would have based on their industry, size, and business model. Be specific to their actual operations - avoid generic categories unless they truly apply.
 
 Return only the JSON profile.`;
+}
 
-  const { text } = await callClaude({
-    system: ENRICHMENT_SYSTEM,
-    user: userMessage,
-    maxTokens: TOKEN_BUDGETS.enrichment,
-    temperature: 0.3,
-    tools: [
-      {
-        type: 'web_search_20260209',
-        name: 'web_search',
-        max_uses: 5,
-      },
-    ],
-  });
+const ENRICHMENT_TOOLS: Anthropic.Messages.ToolUnion[] = [
+  {
+    type: 'web_search_20260209',
+    name: 'web_search',
+    max_uses: 5,
+  },
+];
 
-  const parsed = extractJSON<EnrichedCompanyData>(text);
-
+function validateEnriched(parsed: EnrichedCompanyData): EnrichedCompanyData {
   if (!parsed.name || !parsed.spendingCategories || !Array.isArray(parsed.spendingCategories)) {
     throw new ClaudeError(
       'PARSE_ERROR',
       'Enrichment response missing required fields (name, spendingCategories)',
     );
   }
-
   return parsed;
+}
+
+async function attemptEnrichCompanyProfile(
+  cleanDomain: string,
+): Promise<EnrichedCompanyData> {
+  const { text } = await callClaude({
+    system: ENRICHMENT_SYSTEM,
+    user: buildEnrichmentUserMessage(cleanDomain),
+    maxTokens: TOKEN_BUDGETS.enrichment,
+    tools: ENRICHMENT_TOOLS,
+  });
+  return validateEnriched(extractJSON<EnrichedCompanyData>(text));
+}
+
+export async function enrichCompanyProfile(
+  cleanDomain: string,
+): Promise<EnrichedCompanyData> {
+  return withParseRetry('enrichCompanyProfile', () =>
+    attemptEnrichCompanyProfile(cleanDomain),
+  );
+}
+
+/**
+ * Streaming variant of `enrichCompanyProfile`. Reports progress via `onStatus`
+ * by listening for `server_tool_use` (web search initiated) and
+ * `web_search_tool_result` (search completed) content blocks, plus field-name
+ * triggers in the streamed JSON output.
+ *
+ * On PARSE_ERROR (Claude returned text the repair pass couldn't fix) the call
+ * is retried once silently — the user only sees a "still working..." status
+ * blip, not an error. See `withParseRetry`.
+ */
+export async function enrichCompanyProfileStreaming(
+  cleanDomain: string,
+  onStatus: (status: string) => void,
+): Promise<EnrichedCompanyData> {
+  return withParseRetry('enrichCompanyProfileStreaming', (attempt) =>
+    attemptEnrichCompanyProfileStreaming(cleanDomain, onStatus, attempt),
+  );
+}
+
+async function attemptEnrichCompanyProfileStreaming(
+  cleanDomain: string,
+  onStatus: (status: string) => void,
+  attempt: number,
+): Promise<EnrichedCompanyData> {
+  const client = getClient();
+
+  // Surface the retry to the user so they don't think it's hung. The first
+  // attempt's status messages will start streaming again right after this.
+  if (attempt > 1) {
+    onStatus('Refining results...');
+  }
+
+  let text = '';
+  let stopReason: Anthropic.Message['stop_reason'] = null;
+  let searchCount = 0;
+  const triggeredFields = new Set<string>();
+  const FIELD_TRIGGERS: Array<{ field: string; message: string }> = [
+    { field: '"name"', message: 'Identifying company name...' },
+    { field: '"description"', message: 'Summarizing what the company does...' },
+    { field: '"industry"', message: 'Classifying industry...' },
+    { field: '"employeeCount"', message: 'Looking up employee count...' },
+    { field: '"location"', message: 'Locating headquarters...' },
+    { field: '"spendingCategories"', message: 'Identifying spending categories...' },
+  ];
+
+  try {
+    const stream = client.messages.stream(
+      {
+        model: MODEL,
+        max_tokens: TOKEN_BUDGETS.enrichment,
+        system: ENRICHMENT_SYSTEM,
+        messages: [{ role: 'user', content: buildEnrichmentUserMessage(cleanDomain) }],
+        tools: ENRICHMENT_TOOLS,
+      },
+      { timeout: TIMEOUT_MS },
+    );
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_start') {
+        const block = event.content_block;
+        if (block.type === 'server_tool_use' && block.name === 'web_search') {
+          searchCount += 1;
+          onStatus(
+            searchCount === 1
+              ? 'Searching the web for company info...'
+              : `Searching the web (${searchCount}/5)...`,
+          );
+        } else if (block.type === 'web_search_tool_result') {
+          onStatus('Reviewing search results...');
+        }
+      } else if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'text_delta'
+      ) {
+        const chunk = event.delta.text;
+        text += chunk;
+        for (const trigger of FIELD_TRIGGERS) {
+          if (!triggeredFields.has(trigger.field) && text.includes(trigger.field)) {
+            triggeredFields.add(trigger.field);
+            onStatus(trigger.message);
+          }
+        }
+      } else if (event.type === 'message_delta' && event.delta.stop_reason) {
+        stopReason = event.delta.stop_reason;
+      }
+    }
+  } catch (err) {
+    throw mapClaudeError(err);
+  }
+
+  if (stopReason === 'max_tokens') {
+    throw new ClaudeError(
+      'TRUNCATED',
+      'Enrichment response was truncated due to max_tokens limit',
+    );
+  }
+
+  return validateEnriched(extractJSON<EnrichedCompanyData>(text));
 }
 
 // ---------------------------------------------------------------------------

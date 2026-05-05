@@ -13,9 +13,16 @@ interface LogoOptions {
 }
 
 /**
- * Generate a logo.dev URL for a given domain
+ * Generate a logo.dev URL for a given domain.
+ *
+ * Returns `null` when no `VITE_LOGO_DEV_KEY` is configured — every Logo.dev
+ * request without a token returns HTTP 401, so it's wasteful (and noisy in
+ * the console) to even try. Callers that wrap this in `<CompanyLogo>` will
+ * just skip straight to the Clearbit/Google fallbacks.
  */
-export function getLogoUrl(domain: string, options: LogoOptions = {}): string {
+export function getLogoUrl(domain: string, options: LogoOptions = {}): string | null {
+  if (!LOGO_DEV_KEY) return null;
+
   const {
     size = 128,
     format = 'png',
@@ -25,7 +32,6 @@ export function getLogoUrl(domain: string, options: LogoOptions = {}): string {
     fallback = 'monogram',
   } = options;
 
-  // Clean the domain (remove protocol and www)
   const cleanDomain = domain
     .replace(/^(https?:\/\/)?(www\.)?/, '')
     .split('/')[0]
@@ -56,20 +62,20 @@ export function getLogoUrl(domain: string, options: LogoOptions = {}): string {
 /**
  * Get a small logo for inline display (e.g., in lists)
  */
-export function getSmallLogo(domain: string): string {
+export function getSmallLogo(domain: string): string | null {
   return getLogoUrl(domain, { size: 32, format: 'png' });
 }
 
 /**
  * Get a medium logo for cards and headers
  */
-export function getMediumLogo(domain: string): string {
+export function getMediumLogo(domain: string): string | null {
   return getLogoUrl(domain, { size: 64, format: 'png' });
 }
 
 /**
  * Get a large logo for detailed views
  */
-export function getLargeLogo(domain: string): string {
+export function getLargeLogo(domain: string): string | null {
   return getLogoUrl(domain, { size: 128, format: 'png' });
 }

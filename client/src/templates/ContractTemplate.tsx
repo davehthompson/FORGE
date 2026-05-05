@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { ContractData } from '../types';
 import { getLogoUrl } from '../utils/logo';
+import { normalizeDomain } from '../utils/domain';
 import { useLogoColors, getLighterColor, getColorWithOpacity } from '../hooks/useLogoColors';
 import { formatWithSymbol } from '../utils/currencies';
+import { CompanyLogo } from '../components/ui';
 
 interface ContractTemplateProps {
   data: ContractData;
@@ -14,10 +17,12 @@ export function ContractTemplate({ data, scale = 1, currency = 'USD' }: Contract
   const formatCurrency = (amount: number): string => {
     return formatWithSymbol(amount, currency);
   };
-  const providerLogoUrl = data.parties.provider.domain 
-    ? getLogoUrl(data.parties.provider.domain, { size: 48 }) 
+  const providerDomain = normalizeDomain(data.parties.provider.domain);
+  const providerLogoUrl = providerDomain
+    ? getLogoUrl(providerDomain, { size: 48 })
     : null;
-  const logoColors = useLogoColors(providerLogoUrl);
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(providerLogoUrl);
+  const logoColors = useLogoColors(resolvedLogoUrl);
 
   // Use logo colors or fall back to defaults
   const accentColor = logoColors?.primary || '#3D3D3D';
@@ -72,14 +77,13 @@ export function ContractTemplate({ data, scale = 1, currency = 'USD' }: Contract
           </p>
           <div className="flex items-start gap-3">
             {providerLogoUrl && (
-              <img 
-                src={providerLogoUrl} 
-                alt={`${data.parties.provider.name} logo`}
-                className="w-12 h-12 object-contain rounded-lg flex-shrink-0"
+              <CompanyLogo
+                src={providerLogoUrl}
+                name={data.parties.provider.name}
+                size={48}
+                className="rounded-lg flex-shrink-0"
                 style={{ border: `2px solid ${accentBorderColor}` }}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
+                onLoaded={setResolvedLogoUrl}
               />
             )}
             <div>

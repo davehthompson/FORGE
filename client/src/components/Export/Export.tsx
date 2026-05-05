@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { 
-  FileText, 
-  Receipt, 
-  FileSpreadsheet, 
+import { useRef, useState } from 'react';
+import {
+  FileText,
+  Receipt,
+  FileSpreadsheet,
   FileSignature,
   ArrowLeft,
   Image,
@@ -12,15 +12,23 @@ import {
   RefreshCw,
   Printer,
   Building2,
-  Plane
+  Plane,
 } from 'lucide-react';
 import { Button, Card, CardContent, Logo, Badge } from '../ui';
 import { useStore } from '../../hooks/useStore';
-import { exportPdf, exportJpg, downloadBlob } from '../../services/api';
-import type { AssetType, AssetData, InvoiceData, ReceiptData, PaperReceiptData, QuoteData, ContractData, HotelFolioData, AirlineReceiptData } from '../../types';
+import { exportToPdf, exportToJpeg, downloadBlob } from '../../services/capture';
+import type {
+  AssetType,
+  AssetData,
+  InvoiceData,
+  ReceiptData,
+  PaperReceiptData,
+  QuoteData,
+  ContractData,
+  HotelFolioData,
+  AirlineReceiptData,
+} from '../../types';
 import { AssetPreview } from '../Editor/AssetPreview';
-import { getLogoUrl } from '../../utils/logo';
-import { getCachedLogoColor } from '../../hooks/useLogoColors';
 
 const TYPE_LABELS: Record<AssetType, string> = {
   invoice: 'Invoice',
@@ -30,6 +38,19 @@ const TYPE_LABELS: Record<AssetType, string> = {
   airline_receipt: 'Airline_Receipt',
   quote: 'Quote',
   contract: 'Contract',
+};
+
+// Display label used inside PDF/JPG metadata strings — matches the server's
+// previous ASSET_TYPE_NAMES mapping verbatim so downstream consumers that
+// inspected metadata see the same values.
+const ASSET_TYPE_NAMES: Record<AssetType, string> = {
+  invoice: 'Invoice',
+  receipt: 'Receipt',
+  quote: 'Quote',
+  contract: 'Contract',
+  paper_receipt: 'Paper Receipt',
+  hotel_folio: 'Hotel Folio',
+  airline_receipt: 'Airline Receipt',
 };
 
 function getVendorAndDate(type: AssetType, data: AssetData): { vendor: string; date: string } {
@@ -42,6 +63,19 @@ function getVendorAndDate(type: AssetType, data: AssetData): { vendor: string; d
     case 'quote': { const d = data as QuoteData; return { vendor: d.vendor?.name || '', date: d.date || '' }; }
     case 'contract': { const d = data as ContractData; return { vendor: d.parties?.provider?.name || '', date: d.date || '' }; }
     default: return { vendor: '', date: '' };
+  }
+}
+
+function getDocumentIdentifier(type: AssetType, data: AssetData): string {
+  switch (type) {
+    case 'invoice': return (data as InvoiceData).invoiceNumber || 'Unknown';
+    case 'receipt': return (data as ReceiptData).receiptNumber || 'Unknown';
+    case 'quote': return (data as QuoteData).quoteNumber || 'Unknown';
+    case 'contract': return (data as ContractData).contractNumber || 'Unknown';
+    case 'paper_receipt': return (data as PaperReceiptData).receiptNumber || 'Unknown';
+    case 'hotel_folio': return (data as HotelFolioData).folioNumber || 'Unknown';
+    case 'airline_receipt': return (data as AirlineReceiptData).confirmationCode || 'Unknown';
+    default: return 'Unknown';
   }
 }
 
@@ -74,44 +108,23 @@ const ASSET_LABELS: Record<AssetType, string> = {
   airline_receipt: 'Airline Receipt',
 };
 
-// Display order for export items: Quote → Contract → Invoice → Receipts
 const ASSET_DISPLAY_ORDER: AssetType[] = ['quote', 'contract', 'invoice', 'receipt', 'paper_receipt', 'hotel_folio', 'airline_receipt'];
-
-function getVendorDomain(type: AssetType, data: AssetData): string | undefined {
-  switch (type) {
-    case 'invoice':
-      return (data as InvoiceData).vendor?.domain;
-    case 'receipt':
-    case 'paper_receipt':
-      return (data as ReceiptData).vendor?.domain;
-    case 'quote':
-      return (data as QuoteData).vendor?.domain;
-    case 'contract':
-      return (data as ContractData).parties?.provider?.domain;
-    case 'hotel_folio':
-      return (data as HotelFolioData).hotel?.domain;
-    case 'airline_receipt':
-      return (data as AirlineReceiptData).airline?.domain;
-    default:
-      return undefined;
-  }
-}
-
-function getAccentColor(type: AssetType, data: AssetData): string | undefined {
-  const domain = getVendorDomain(type, data);
-  if (!domain) return undefined;
-  const logoUrl = getLogoUrl(domain, { size: 64 });
-  return getCachedLogoColor(logoUrl)?.primary;
-}
 
 type ExportFormat = 'pdf' | 'jpg';
 
 interface ExportStatus {
   type: AssetType;
   format: ExportFormat;
-  invoiceIndex?: number; // For tracking multiple invoices
+  invoiceIndex?: number;
   status: 'pending' | 'exporting' | 'success' | 'error';
   error?: string;
+}
+
+interface RenderTarget {
+  type: AssetType;
+  data: AssetData;
+  /** Bumps each capture so React reuses a fresh DOM subtree instead of caching. */
+  key: number;
 }
 
 export function Export() {
@@ -119,14 +132,61 @@ export function Export() {
   const [exportStatuses, setExportStatuses] = useState<ExportStatus[]>([]);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Off-screen render slot used for capture. Mounted on demand at scale=1
+  // (native template width) so html-to-image sees the same DOM the editor
+  // shows — no separate "print" template, no Puppeteer.
+  const [renderTarget, setRenderTarget] = useState<RenderTarget | null>(null);
+  const captureRef = useRef<HTMLDivElement>(null);
+  const captureKeyRef = useRef(0);
+
   const hasMultipleInvoices = generatedInvoices.length > 1;
 
-  // Helper to create a unique key for status tracking
   const getStatusKey = (type: AssetType, format: ExportFormat, invoiceIndex?: number) => {
     return invoiceIndex !== undefined ? `${type}-${invoiceIndex}-${format}` : `${type}-${format}`;
   };
 
-  const handleExport = async (type: AssetType, format: ExportFormat, data: AssetData, invoiceIndex?: number) => {
+  // Mount AssetPreview off-screen at full size, give the browser two frames to
+  // commit + paint (covers font swap, image decode), and capture the inner DOM.
+  const captureBlob = async (
+    type: AssetType,
+    data: AssetData,
+    format: ExportFormat,
+  ): Promise<Blob> => {
+    captureKeyRef.current += 1;
+    setRenderTarget({ type, data, key: captureKeyRef.current });
+
+    // Two rAFs: first lets React commit, second lets layout/paint settle.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+
+    const node = captureRef.current;
+    if (!node) {
+      setRenderTarget(null);
+      throw new Error('Capture container did not mount');
+    }
+
+    const meta = {
+      docId: getDocumentIdentifier(type, data),
+      typeName: ASSET_TYPE_NAMES[type] || type,
+    };
+
+    try {
+      if (format === 'pdf') {
+        return await exportToPdf(node, meta);
+      }
+      return await exportToJpeg(node, meta);
+    } finally {
+      setRenderTarget(null);
+    }
+  };
+
+  const handleExport = async (
+    type: AssetType,
+    format: ExportFormat,
+    data: AssetData,
+    invoiceIndex?: number,
+  ) => {
     if (!data) return;
 
     const statusKey = getStatusKey(type, format, invoiceIndex);
@@ -137,14 +197,7 @@ export function Export() {
     ]);
 
     try {
-      const primaryColor = getAccentColor(type, data);
-      let blob: Blob;
-      if (format === 'pdf') {
-        blob = await exportPdf(type, data, selectedCurrency, primaryColor);
-      } else {
-        blob = await exportJpg(type, data, selectedCurrency, primaryColor);
-      }
-
+      const blob = await captureBlob(type, data, format);
       const filename = buildFilename(type, data, format, invoiceIndex);
       downloadBlob(blob, filename);
 
@@ -152,16 +205,16 @@ export function Export() {
         prev.map((s) =>
           getStatusKey(s.type, s.format, s.invoiceIndex) === statusKey
             ? { ...s, status: 'success' }
-            : s
-        )
+            : s,
+        ),
       );
     } catch (error) {
       setExportStatuses((prev) =>
         prev.map((s) =>
           getStatusKey(s.type, s.format, s.invoiceIndex) === statusKey
             ? { ...s, status: 'error', error: error instanceof Error ? error.message : 'Export failed' }
-            : s
-        )
+            : s,
+        ),
       );
     }
   };
@@ -169,12 +222,10 @@ export function Export() {
   const handleExportAll = async (format: ExportFormat) => {
     setIsExporting(true);
 
-    // Export in display order
     for (const type of ASSET_DISPLAY_ORDER) {
       if (!selectedAssets.includes(type)) continue;
-      
+
       if (type === 'invoice' && hasMultipleInvoices) {
-        // Export all invoices
         for (let i = 0; i < generatedInvoices.length; i++) {
           await handleExport(type, format, generatedInvoices[i], i);
         }
@@ -198,7 +249,6 @@ export function Export() {
     reset();
   };
 
-  // Calculate total exportable items (including multiple invoices)
   const totalExportItems = selectedAssets.reduce((count, type) => {
     if (type === 'invoice' && hasMultipleInvoices) {
       return count + generatedInvoices.length;
@@ -208,7 +258,32 @@ export function Export() {
 
   return (
     <div className="min-h-screen bg-ramp-sand">
-      {/* Header */}
+      {/* Off-screen capture slot — full-size AssetPreview, hidden from view
+          and from accessibility tree. Mounted only while a capture is running. */}
+      {renderTarget && (
+        <div
+          aria-hidden
+          style={{
+            position: 'fixed',
+            left: '-100000px',
+            top: 0,
+            pointerEvents: 'none',
+            // Plain white background so html-to-image isn't pulling the page
+            // background through into the PNG.
+            background: '#ffffff',
+          }}
+        >
+          <div ref={captureRef} key={renderTarget.key}>
+            <AssetPreview
+              type={renderTarget.type}
+              data={renderTarget.data}
+              scale={1}
+              currency={selectedCurrency}
+            />
+          </div>
+        </div>
+      )}
+
       <header className="bg-white border-b border-ramp-stone px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button
@@ -230,7 +305,6 @@ export function Export() {
         </Button>
       </header>
 
-      {/* Main content */}
       <div className="max-w-6xl mx-auto p-8">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-ramp-slate mb-2">Export Your Assets</h1>
@@ -271,12 +345,11 @@ export function Export() {
           </CardContent>
         </Card>
 
-        {/* Individual assets - ordered by document flow */}
+        {/* Individual assets */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {ASSET_DISPLAY_ORDER
             .filter(type => selectedAssets.includes(type))
             .flatMap((type) => {
-              // Handle multiple invoices
               if (type === 'invoice' && hasMultipleInvoices) {
                 return generatedInvoices.map((invoiceData, index) => {
                   const Icon = ASSET_ICONS[type];
@@ -285,14 +358,12 @@ export function Export() {
 
                   return (
                     <Card key={`invoice-${index}`} variant="elevated" padding="none" className="overflow-hidden">
-                      {/* Preview */}
                       <div className="bg-ramp-gray-300 p-4 flex justify-center items-start overflow-hidden h-64">
                         <div className="transform scale-[0.25] origin-top">
                           <AssetPreview type={type} data={invoiceData} scale={1} />
                         </div>
                       </div>
 
-                      {/* Info and actions */}
                       <div className="p-4">
                         <div className="flex items-center gap-2 mb-3">
                           <Icon className="w-5 h-5 text-ramp-slate" />
@@ -333,7 +404,6 @@ export function Export() {
                 });
               }
 
-              // Handle single assets (quote, contract, receipt, or single invoice)
               const data = generatedAssets[type];
               if (!data) return [];
 
@@ -343,14 +413,12 @@ export function Export() {
 
               return [(
                 <Card key={type} variant="elevated" padding="none" className="overflow-hidden">
-                  {/* Preview */}
                   <div className="bg-ramp-gray-300 p-4 flex justify-center items-start overflow-hidden h-64">
                     <div className="transform scale-[0.25] origin-top">
                       <AssetPreview type={type} data={data} scale={1} />
                     </div>
                   </div>
 
-                  {/* Info and actions */}
                   <div className="p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <Icon className="w-5 h-5 text-ramp-slate" />
@@ -386,7 +454,6 @@ export function Export() {
             })}
         </div>
 
-        {/* Success message */}
         {exportStatuses.some((s) => s.status === 'success') && (
           <div className="mt-8 text-center">
             <div className="inline-flex items-center gap-2 bg-ramp-mist/20 text-ramp-smolder px-4 py-2 rounded-lg">
