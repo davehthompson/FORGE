@@ -9,6 +9,7 @@ import { generateReceiptImage, AVAILABLE_SCENES } from '../services/gemini.js';
 import { CompanyProfile, AssetType, RelatedAssetContext, InvoiceConfig } from '../types.js';
 import { trackGeneration } from '../services/analytics.js';
 import { isTestDomain, getMockAsset, getMockStatusMessages } from '../services/mockData.js';
+import { openSSE } from '../utils/sse.js';
 
 export const generateRouter = Router();
 
@@ -120,62 +121,55 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       });
     }
 
-    // Set SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
-    // Helper to send SSE events
-    const sendEvent = (event: string, data: unknown) => {
-      res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
+    const stream = openSSE(res);
 
     if (isTestDomain(company.domain || '')) {
       console.log(`🧪 Test mode — streaming mock ${type}`);
       const statuses = getMockStatusMessages(type);
       for (const status of statuses) {
-        sendEvent('status', { status });
+        stream.send('status', { status });
         await new Promise(r => setTimeout(r, 400));
       }
       const mockData = getMockAsset(type, invoiceConfig, relatedAssets);
-      sendEvent('complete', { success: true, data: mockData });
+      stream.send('complete', { success: true, data: mockData });
       trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard' });
-      return res.end();
+      return stream.close();
     }
 
-    // Generate with streaming status updates (pass related assets and invoice config for connected generation)
-    const assetData = await generateAssetContentStreaming(
-      type,
-      company,
-      spendingCategory,
-      (status: string) => {
-        sendEvent('status', { status });
-      },
-      relatedAssets,
-      invoiceConfig,
-      currency,
-      lineItemCount
-    );
+    try {
+      const assetData = await generateAssetContentStreaming(
+        type,
+        company,
+        spendingCategory,
+        (status: string) => {
+          stream.send('status', { status });
+        },
+        relatedAssets,
+        invoiceConfig,
+        currency,
+        lineItemCount
+      );
 
-    // Send the final complete data
-    sendEvent('complete', { success: true, data: assetData });
+      stream.send('complete', { success: true, data: assetData });
 
-    trackGeneration({
-      assetType: type,
-      spendingCategory,
-      companyName: company.name,
-      companyDomain: company.domain,
-      currency,
-      flowType: relatedAssets ? 'connected' : 'standard',
-    });
-    
-    // Close the connection
-    res.end();
+      trackGeneration({
+        assetType: type,
+        spendingCategory,
+        companyName: company.name,
+        companyDomain: company.domain,
+        currency,
+        flowType: relatedAssets ? 'connected' : 'standard',
+      });
+
+      stream.close();
+    } catch (error) {
+      console.error('Streaming generation error:', error);
+      const { body } = formatErrorResponse(error);
+      stream.send('error', { error: body.error, code: body.code });
+      stream.close();
+    }
   } catch (error) {
-    console.error('Streaming generation error:', error);
+    console.error('Streaming generation error (pre-stream):', error);
 
     const { status, body } = formatErrorResponse(error);
 
@@ -183,8 +177,6 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       return res.status(status).json(body);
     }
 
-    res.write(`event: error\n`);
-    res.write(`data: ${JSON.stringify({ error: body.error, code: body.code })}\n\n`);
     res.end();
   }
 });
@@ -215,42 +207,38 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
       });
     }
 
-    // Set SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
+    const stream = openSSE(res);
 
-    const sendEvent = (event: string, data: unknown) => {
-      res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
+    try {
+      const receiptData = await generateQuickReceiptContent(
+        prompt,
+        receiptType,
+        currency,
+        (status: string) => {
+          stream.send('status', { status });
+        }
+      );
 
-    // Generate receipt from prompt
-    const receiptData = await generateQuickReceiptContent(
-      prompt,
-      receiptType,
-      currency,
-      (status: string) => {
-        sendEvent('status', { status });
-      }
-    );
+      stream.send('complete', { success: true, data: receiptData });
 
-    sendEvent('complete', { success: true, data: receiptData });
+      trackGeneration({
+        assetType: receiptType,
+        spendingCategory: '',
+        companyName: '',
+        companyDomain: '',
+        currency,
+        flowType: 'quick_receipt',
+      });
 
-    trackGeneration({
-      assetType: receiptType,
-      spendingCategory: '',
-      companyName: '',
-      companyDomain: '',
-      currency,
-      flowType: 'quick_receipt',
-    });
-
-    res.end();
+      stream.close();
+    } catch (error) {
+      console.error('Quick receipt generation error:', error);
+      const { body } = formatErrorResponse(error);
+      stream.send('error', { error: body.error, code: body.code });
+      stream.close();
+    }
   } catch (error) {
-    console.error('Quick receipt generation error:', error);
+    console.error('Quick receipt generation error (pre-stream):', error);
 
     const { status, body } = formatErrorResponse(error);
 
@@ -258,8 +246,6 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
       return res.status(status).json(body);
     }
 
-    res.write(`event: error\n`);
-    res.write(`data: ${JSON.stringify({ error: body.error, code: body.code })}\n\n`);
     res.end();
   }
 });

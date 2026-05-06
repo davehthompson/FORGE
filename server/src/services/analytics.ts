@@ -14,6 +14,13 @@ export interface GenerationEvent {
 
 let pool: pg.Pool | null = null;
 let tableReady = false;
+// Sticky failure latch: once `CREATE TABLE` fails (most commonly with PG15's
+// `42501 permission denied for schema public` on managed Postgres where the
+// app role isn't the schema owner), subsequent calls short-circuit instead of
+// re-attempting the DDL on every analytics-touching request and re-spamming
+// the error in the logs. A process restart resets the latch — useful when an
+// operator finally grants `CREATE ON SCHEMA public`.
+let tableInitFailed = false;
 
 /**
  * Returns true if the env var looks like a real Postgres URL — guards against
@@ -52,6 +59,7 @@ async function ensureTable(): Promise<pg.Pool | null> {
   const client = getPool();
   if (!client) return null;
   if (tableReady) return client;
+  if (tableInitFailed) return null;
 
   try {
     await client.query(`
@@ -73,7 +81,17 @@ async function ensureTable(): Promise<pg.Pool | null> {
     tableReady = true;
     return client;
   } catch (err) {
-    console.error('Analytics: failed to create table', err);
+    tableInitFailed = true;
+    const code = (err as { code?: string })?.code;
+    if (code === '42501') {
+      console.warn(
+        'Analytics: disabled — DB user lacks CREATE on the target schema. ' +
+        'Grant CREATE on schema public (or the schema in DATABASE_URL) to ' +
+        'enable persistence, then restart the app. Continuing without analytics.',
+      );
+    } else {
+      console.error('Analytics: failed to create table; disabling analytics for this process.', err);
+    }
     return null;
   }
 }

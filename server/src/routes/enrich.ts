@@ -5,6 +5,7 @@ import {
 } from '../services/enrichment.js';
 import { formatErrorResponse } from '../services/claude.js';
 import { isTestDomain, getMockCompanyProfile } from '../services/mockData.js';
+import { openSSE } from '../utils/sse.js';
 
 export const enrichRouter = Router();
 
@@ -53,38 +54,29 @@ enrichRouter.post(
       return res.status(400).json({ success: false, error: 'Domain is required' });
     }
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
-    const sendEvent = (event: string, data: unknown) => {
-      res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
+    const stream = openSSE(res);
 
     try {
-      sendEvent('status', { status: `Looking up ${domain}...` });
+      stream.send('status', { status: `Looking up ${domain}...` });
 
       if (isTestDomain(domain)) {
-        sendEvent('status', { status: 'Test domain — using mock data' });
-        sendEvent('complete', { success: true, data: getMockCompanyProfile() });
-        return res.end();
+        stream.send('status', { status: 'Test domain — using mock data' });
+        stream.send('complete', { success: true, data: getMockCompanyProfile() });
+        return stream.close();
       }
 
       const profile = await enrichCompanyFromDomainStreaming(domain, (status) => {
-        sendEvent('status', { status });
+        stream.send('status', { status });
       });
 
-      sendEvent('status', { status: 'Finalizing profile...' });
-      sendEvent('complete', { success: true, data: profile });
-      res.end();
+      stream.send('status', { status: 'Finalizing profile...' });
+      stream.send('complete', { success: true, data: profile });
+      stream.close();
     } catch (error) {
       console.error('Enrichment streaming error:', error);
       const { body } = formatErrorResponse(error);
-      sendEvent('error', { error: body.error, code: body.code });
-      res.end();
+      stream.send('error', { error: body.error, code: body.code });
+      stream.close();
     }
   },
 );
