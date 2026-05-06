@@ -14,6 +14,18 @@ import { v1Router } from './routes/v1.js';
 import { apiKeyAuth } from './middleware/apiKey.js';
 import { formatErrorResponse } from './services/claude.js';
 
+// Last-resort traps so a Node-level crash mid-request doesn't disappear
+// silently. Won't tell us *which* in-flight request died (would need
+// AsyncLocalStorage for that), but at least makes the difference between
+// "node died silently" vs "node logged the crash" unmistakable when
+// diagnosing gateway-drop vs code-path-failure issues in Ramplify logs.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 

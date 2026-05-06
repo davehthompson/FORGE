@@ -53,12 +53,13 @@ export async function enrichCompanyFromDomain(domain: string): Promise<CompanyPr
 export async function enrichCompanyFromDomainStreaming(
   domain: string,
   onStatus: (status: string) => void,
+  reqId?: string,
 ): Promise<CompanyProfile> {
   const cleanDomain = cleanDomainInput(domain);
 
   let enriched;
   try {
-    enriched = await enrichCompanyProfileStreaming(cleanDomain, onStatus);
+    enriched = await enrichCompanyProfileStreaming(cleanDomain, onStatus, reqId);
   } catch (err) {
     if (err instanceof ClaudeError) throw err;
     throw err;

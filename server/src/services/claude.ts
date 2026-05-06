@@ -1436,9 +1436,13 @@ export async function enrichCompanyProfile(
 export async function enrichCompanyProfileStreaming(
   cleanDomain: string,
   onStatus: (status: string) => void,
+  reqId?: string,
 ): Promise<EnrichedCompanyData> {
+  // Mint a fallback id so logs always have a tag even when called outside an
+  // Express request context (e.g. future scripts/tests).
+  const id = reqId ?? Math.random().toString(16).slice(2, 6);
   return withParseRetry('enrichCompanyProfileStreaming', (attempt) =>
-    attemptEnrichCompanyProfileStreaming(cleanDomain, onStatus, attempt),
+    attemptEnrichCompanyProfileStreaming(cleanDomain, onStatus, attempt, id),
   );
 }
 
@@ -1446,18 +1450,26 @@ async function attemptEnrichCompanyProfileStreaming(
   cleanDomain: string,
   onStatus: (status: string) => void,
   attempt: number,
+  reqId: string,
 ): Promise<EnrichedCompanyData> {
+  const tag = `[enrich ${reqId}]`;
+  const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
+
   const client = getClient();
 
   // Surface the retry to the user so they don't think it's hung. The first
   // attempt's status messages will start streaming again right after this.
   if (attempt > 1) {
+    console.log(`${tag} retry attempt=${attempt} elapsed_ms=${elapsed()}`);
     onStatus('Refining results...');
   }
 
   let text = '';
   let stopReason: Anthropic.Message['stop_reason'] = null;
   let searchCount = 0;
+  let firstTextDeltaSeen = false;
+  const searchStartTimes = new Map<number, number>();
   const triggeredFields = new Set<string>();
   const FIELD_TRIGGERS: Array<{ field: string; message: string }> = [
     { field: '"name"', message: 'Identifying company name...' },
@@ -1469,6 +1481,7 @@ async function attemptEnrichCompanyProfileStreaming(
   ];
 
   try {
+    console.log(`${tag} claude_request_sent elapsed_ms=${elapsed()} attempt=${attempt}`);
     const stream = client.messages.stream(
       {
         model: MODEL,
@@ -1485,42 +1498,75 @@ async function attemptEnrichCompanyProfileStreaming(
         const block = event.content_block;
         if (block.type === 'server_tool_use' && block.name === 'web_search') {
           searchCount += 1;
+          searchStartTimes.set(searchCount, Date.now());
+          console.log(`${tag} web_search_start n=${searchCount} elapsed_ms=${elapsed()}`);
           onStatus(
             searchCount === 1
               ? 'Searching the web for company info...'
               : `Searching the web (${searchCount}/5)...`,
           );
         } else if (block.type === 'web_search_tool_result') {
+          const startedAtSearch = searchStartTimes.get(searchCount);
+          const searchMs = startedAtSearch !== undefined ? Date.now() - startedAtSearch : null;
+          console.log(
+            `${tag} web_search_end n=${searchCount} elapsed_ms=${elapsed()}` +
+              (searchMs !== null ? ` search_ms=${searchMs}` : ''),
+          );
           onStatus('Reviewing search results...');
         }
       } else if (
         event.type === 'content_block_delta' &&
         event.delta.type === 'text_delta'
       ) {
+        if (!firstTextDeltaSeen) {
+          firstTextDeltaSeen = true;
+          console.log(`${tag} text_delta_first elapsed_ms=${elapsed()}`);
+        }
         const chunk = event.delta.text;
         text += chunk;
         for (const trigger of FIELD_TRIGGERS) {
           if (!triggeredFields.has(trigger.field) && text.includes(trigger.field)) {
             triggeredFields.add(trigger.field);
+            console.log(
+              `${tag} field_seen field=${trigger.field.replaceAll('"', '')} elapsed_ms=${elapsed()}`,
+            );
             onStatus(trigger.message);
           }
         }
       } else if (event.type === 'message_delta' && event.delta.stop_reason) {
         stopReason = event.delta.stop_reason;
+        console.log(`${tag} stop_reason reason=${stopReason} elapsed_ms=${elapsed()}`);
       }
     }
   } catch (err) {
-    throw mapClaudeError(err);
+    const mapped = mapClaudeError(err);
+    console.error(
+      `${tag} claude_threw elapsed_ms=${elapsed()} searches=${searchCount} text_len=${text.length} code=${mapped.code} message=${JSON.stringify(mapped.message)}`,
+    );
+    throw mapped;
   }
 
   if (stopReason === 'max_tokens') {
+    console.warn(`${tag} truncated elapsed_ms=${elapsed()} text_len=${text.length}`);
     throw new ClaudeError(
       'TRUNCATED',
       'Enrichment response was truncated due to max_tokens limit',
     );
   }
 
-  return validateEnriched(extractJSON<EnrichedCompanyData>(text));
+  try {
+    const parsed = validateEnriched(extractJSON<EnrichedCompanyData>(text));
+    console.log(
+      `${tag} json_parsed elapsed_ms=${elapsed()} text_len=${text.length} searches=${searchCount}`,
+    );
+    return parsed;
+  } catch (err) {
+    const code = err instanceof ClaudeError ? err.code : 'PARSE_ERROR';
+    console.error(
+      `${tag} json_parse_failed elapsed_ms=${elapsed()} text_len=${text.length} code=${code}`,
+    );
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

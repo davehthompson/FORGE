@@ -21,11 +21,24 @@ import type { Response } from 'express';
  * downstream gzip middleware that might try to buffer-then-compress.
  */
 export interface SSEStream {
+  /** Short request id for correlating log lines across the request lifecycle. */
+  id: string;
   send: (event: string, data: unknown) => void;
   close: () => void;
 }
 
+/**
+ * Mint a short hex id (4 chars) for tagging log lines belonging to one
+ * request. Collisions are fine for log-grepping purposes — we're optimizing
+ * for human readability in Ramplify's log viewer, not cryptographic
+ * uniqueness.
+ */
+export function makeReqId(): string {
+  return Math.random().toString(16).slice(2, 6);
+}
+
 export function openSSE(res: Response): SSEStream {
+  const id = makeReqId();
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -47,6 +60,7 @@ export function openSSE(res: Response): SSEStream {
   res.on('close', () => clearInterval(heartbeat));
 
   return {
+    id,
     send(event, data) {
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
