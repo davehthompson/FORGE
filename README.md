@@ -46,7 +46,7 @@ PORT=3001
 ANTHROPIC_API_KEY=your_anthropic_api_key
 GEMINI_API_KEY=your_gemini_api_key
 LOGO_DEV_KEY=your_logo_dev_publishable_key
-DATABASE_URL=postgres://user:pass@host:5432/dbname  # provided by Ramplify in prod
+DATABASE_URL=  # leave blank locally; Ramplify injects the real value in prod
 ```
 
 **Note:** Required keys:
