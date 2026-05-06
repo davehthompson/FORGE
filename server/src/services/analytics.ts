@@ -14,12 +14,15 @@ export interface GenerationEvent {
 
 let pool: pg.Pool | null = null;
 let tableReady = false;
-// Sticky failure latch: once `CREATE TABLE` fails (most commonly with PG15's
-// `42501 permission denied for schema public` on managed Postgres where the
-// app role isn't the schema owner), subsequent calls short-circuit instead of
-// re-attempting the DDL on every analytics-touching request and re-spamming
-// the error in the logs. A process restart resets the latch — useful when an
-// operator finally grants `CREATE ON SCHEMA public`.
+// Sticky failure latch: once the table-presence probe fails (most commonly
+// `42P01 undefined_table` — meaning the deploy migration step didn't run),
+// subsequent calls short-circuit instead of re-probing on every
+// analytics-touching request and re-spamming the error. A process restart
+// resets the latch — useful after the migration is finally run.
+//
+// DDL itself lives in [server/src/migrate.ts](../migrate.ts), executed by
+// the Procfile `migration:` target with elevated credentials. The runtime
+// app role is DML-only.
 let tableInitFailed = false;
 
 /**
@@ -62,35 +65,23 @@ async function ensureTable(): Promise<pg.Pool | null> {
   if (tableInitFailed) return null;
 
   try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS generation_events (
-        id SERIAL PRIMARY KEY,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        asset_type TEXT NOT NULL,
-        spending_category TEXT NOT NULL DEFAULT '',
-        company_name TEXT NOT NULL DEFAULT '',
-        company_domain TEXT NOT NULL DEFAULT '',
-        currency TEXT NOT NULL DEFAULT 'USD',
-        flow_type TEXT NOT NULL DEFAULT 'standard',
-        api_service TEXT NOT NULL DEFAULT ''
-      )
-    `);
-    await client.query(`
-      ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS api_service TEXT NOT NULL DEFAULT ''
-    `);
+    // Cheap presence probe — `LIMIT 0` returns no rows so it's effectively
+    // a metadata lookup. We deliberately do NOT issue any DDL here; the
+    // runtime DB role is DML-only and `CREATE TABLE` would 42501.
+    await client.query(`SELECT 1 FROM generation_events LIMIT 0`);
     tableReady = true;
     return client;
   } catch (err) {
     tableInitFailed = true;
     const code = (err as { code?: string })?.code;
-    if (code === '42501') {
+    if (code === '42P01') {
       console.warn(
-        'Analytics: disabled — DB user lacks CREATE on the target schema. ' +
-        'Grant CREATE on schema public (or the schema in DATABASE_URL) to ' +
-        'enable persistence, then restart the app. Continuing without analytics.',
+        'Analytics: disabled — generation_events table not found. ' +
+        'Run the deploy migration step (Procfile `migration:` target) ' +
+        'or `node server/dist/migrate.js` against DATABASE_URL.',
       );
     } else {
-      console.error('Analytics: failed to create table; disabling analytics for this process.', err);
+      console.error('Analytics: failed to verify table; disabling analytics for this process.', err);
     }
     return null;
   }
