@@ -87,7 +87,12 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
   }
 });
 
-// Streaming SSE endpoint
+// Streaming SSE endpoint.
+//
+// Heavily instrumented with structured `[generate <reqId>]` log lines so a
+// silent Ramplify gateway-drop can be discriminated from an upstream Claude
+// failure or a JSON parse error using server logs alone. See the matching
+// pattern in [server/src/routes/enrich.ts](./enrich.ts).
 generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
     const { type, company, spendingCategory, relatedAssets, invoiceConfig, currency = 'USD', lineItemCount } = req.body;
@@ -122,10 +127,31 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       });
     }
 
+    const startedAt = Date.now();
+    const elapsed = () => Date.now() - startedAt;
+
     const stream = openSSE(res);
+    const tag = `[generate ${stream.id}]`;
+
+    console.log(
+      `${tag} start type=${type} domain=${company.domain ?? 'unknown'} flow=${relatedAssets ? 'connected' : 'standard'} client_ip=${req.ip ?? 'unknown'} ua=${JSON.stringify(req.get('user-agent') ?? '')}`,
+    );
+    console.log(`${tag} sse_opened elapsed_ms=${elapsed()}`);
+
+    // res.on('close') (NOT req.on('close')) is the canonical hook for peer
+    // disconnects on the *response* socket. The `was_writableEnded` check
+    // discriminates "we ended the stream voluntarily" from "Ramplify/CF
+    // severed the upstream socket before we could send `complete`".
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        console.warn(
+          `${tag} req_closed_by_peer elapsed_ms=${elapsed()} res_writable=${res.writable} was_writableEnded=${res.writableEnded}`,
+        );
+      }
+    });
 
     if (isTestDomain(company.domain || '')) {
-      console.log(`🧪 Test mode — streaming mock ${type}`);
+      console.log(`${tag} test_mode_mock type=${type}`);
       const statuses = getMockStatusMessages(type);
       for (const status of statuses) {
         stream.send('status', { status });
@@ -133,8 +159,11 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       }
       const mockData = getMockAsset(type, invoiceConfig, relatedAssets);
       stream.send('complete', { success: true, data: mockData });
+      console.log(`${tag} complete_sent elapsed_ms=${elapsed()} mock=true`);
       trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard', userEmail: req.userEmail });
-      return stream.close();
+      stream.close();
+      console.log(`${tag} stream_closed elapsed_ms=${elapsed()}`);
+      return;
     }
 
     try {
@@ -148,10 +177,12 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
         relatedAssets,
         invoiceConfig,
         currency,
-        lineItemCount
+        lineItemCount,
+        stream.id,
       );
 
       stream.send('complete', { success: true, data: assetData });
+      console.log(`${tag} complete_sent elapsed_ms=${elapsed()} flow=${relatedAssets ? 'connected' : 'standard'}`);
 
       trackGeneration({
         assetType: type,
@@ -164,9 +195,12 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       });
 
       stream.close();
+      console.log(`${tag} stream_closed elapsed_ms=${elapsed()}`);
     } catch (error) {
-      console.error('Streaming generation error:', error);
       const { body } = formatErrorResponse(error);
+      console.error(
+        `${tag} failed elapsed_ms=${elapsed()} code=${body.code} error=${JSON.stringify(body.error)}`,
+      );
       stream.send('error', { error: body.error, code: body.code });
       stream.close();
     }
@@ -209,7 +243,24 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
       });
     }
 
+    const startedAt = Date.now();
+    const elapsed = () => Date.now() - startedAt;
+
     const stream = openSSE(res);
+    const tag = `[quick-receipt ${stream.id}]`;
+
+    console.log(
+      `${tag} start receiptType=${receiptType} prompt_len=${prompt.length} client_ip=${req.ip ?? 'unknown'} ua=${JSON.stringify(req.get('user-agent') ?? '')}`,
+    );
+    console.log(`${tag} sse_opened elapsed_ms=${elapsed()}`);
+
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        console.warn(
+          `${tag} req_closed_by_peer elapsed_ms=${elapsed()} res_writable=${res.writable} was_writableEnded=${res.writableEnded}`,
+        );
+      }
+    });
 
     try {
       const receiptData = await generateQuickReceiptContent(
@@ -218,10 +269,12 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
         currency,
         (status: string) => {
           stream.send('status', { status });
-        }
+        },
+        stream.id,
       );
 
       stream.send('complete', { success: true, data: receiptData });
+      console.log(`${tag} complete_sent elapsed_ms=${elapsed()}`);
 
       trackGeneration({
         assetType: receiptType,
@@ -234,9 +287,12 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
       });
 
       stream.close();
+      console.log(`${tag} stream_closed elapsed_ms=${elapsed()}`);
     } catch (error) {
-      console.error('Quick receipt generation error:', error);
       const { body } = formatErrorResponse(error);
+      console.error(
+        `${tag} failed elapsed_ms=${elapsed()} code=${body.code} error=${JSON.stringify(body.error)}`,
+      );
       stream.send('error', { error: body.error, code: body.code });
       stream.close();
     }

@@ -195,6 +195,16 @@ export async function generateAssetStreaming(
   const decoder = new TextDecoder();
   let buffer = '';
   let result: AssetData | null = null;
+  // Track terminal-event arrival so we can discriminate three failure modes
+  // when result is still null at the end of the read loop:
+  //   - never saw any data → server never wrote anything (route 4xx, instant
+  //     hangup, or our SSE write failed to flush)
+  //   - saw status events but no `complete`/`error` → upstream stream was cut
+  //     mid-flight (Ramplify/CloudFront L7 gateway timeout — silent socket
+  //     severance, no terminal event ever sent)
+  //   - saw `complete` → result is set, this branch isn't reached
+  let sawAnyStatus = false;
+  let sawTerminalEvent = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -217,10 +227,13 @@ export async function generateAssetStreaming(
           const parsed = JSON.parse(data);
 
           if (currentEvent === 'status' && parsed.status) {
+            sawAnyStatus = true;
             onStatus(parsed.status);
           } else if (currentEvent === 'complete' && parsed.success && parsed.data) {
+            sawTerminalEvent = true;
             result = parsed.data;
           } else if (currentEvent === 'error' && parsed.error) {
+            sawTerminalEvent = true;
             throw createApiError(parsed.error, parsed.code);
           }
         } catch (e) {
@@ -233,7 +246,15 @@ export async function generateAssetStreaming(
   }
 
   if (!result) {
-    throw createApiError('No result received from streaming generation');
+    if (sawAnyStatus && !sawTerminalEvent) {
+      throw createApiError(
+        'The connection to our AI service was cut before generation finished. ' +
+          'This usually means the request took longer than the proxy allows. ' +
+          'Try again with a smaller asset or simpler company.',
+        'GATEWAY_DROPPED',
+      );
+    }
+    throw createApiError('No result received from streaming generation', 'NO_RESULT');
   }
 
   return result;

@@ -267,6 +267,15 @@ async function callClaude(opts: CallOpts): Promise<{
 
 interface StreamCallOpts extends CallOpts {
   onDelta?: (text: string) => void;
+  /**
+   * Optional log tag (e.g. `[generate a3f2]`). When provided, the helper
+   * emits structured `<tag> claude_request_sent / text_delta_first /
+   * stop_reason / claude_threw / truncated` lines with `elapsed_ms`.
+   * Mirrors the manual logging in `attemptEnrichCompanyProfileStreaming`
+   * so any caller that threads a reqId through gets the same Ramplify
+   * gateway-drop diagnostics for free.
+   */
+  tag?: string;
 }
 
 async function callClaudeStream(opts: StreamCallOpts): Promise<{
@@ -276,6 +285,12 @@ async function callClaudeStream(opts: StreamCallOpts): Promise<{
   const client = getClient();
   let text = '';
   let stopReason: Anthropic.Message['stop_reason'] = null;
+  const tag = opts.tag;
+  const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
+  let firstTextDeltaSeen = false;
+
+  if (tag) console.log(`${tag} claude_request_sent elapsed_ms=${elapsed()} max_tokens=${opts.maxTokens}`);
 
   try {
     const stream = client.messages.stream(
@@ -294,18 +309,25 @@ async function callClaudeStream(opts: StreamCallOpts): Promise<{
         event.type === 'content_block_delta' &&
         event.delta.type === 'text_delta'
       ) {
+        if (tag && !firstTextDeltaSeen) {
+          firstTextDeltaSeen = true;
+          console.log(`${tag} text_delta_first elapsed_ms=${elapsed()}`);
+        }
         const chunk = event.delta.text;
         text += chunk;
         opts.onDelta?.(chunk);
       } else if (event.type === 'message_delta' && event.delta.stop_reason) {
         stopReason = event.delta.stop_reason;
+        if (tag) console.log(`${tag} stop_reason reason=${stopReason} elapsed_ms=${elapsed()} text_len=${text.length}`);
       }
     }
   } catch (err) {
+    if (tag) console.error(`${tag} claude_threw elapsed_ms=${elapsed()} text_len=${text.length}`);
     throw mapClaudeError(err);
   }
 
   if (stopReason === 'max_tokens') {
+    if (tag) console.warn(`${tag} truncated elapsed_ms=${elapsed()} text_len=${text.length} max_tokens=${opts.maxTokens}`);
     throw new ClaudeError(
       'TRUNCATED',
       'Response was truncated due to max_tokens limit',
@@ -1018,6 +1040,7 @@ export async function generateAssetContentStreaming(
   invoiceConfig?: InvoiceConfig,
   currency: string = 'USD',
   lineItemCount?: number,
+  reqId?: string,
 ): Promise<AssetData> {
   const prompt = relatedAssets
     ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency, lineItemCount)
@@ -1031,11 +1054,16 @@ export async function generateAssetContentStreaming(
 
   const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency, relatedAssets);
 
+  const tag = reqId ? `[generate ${reqId}]` : undefined;
+  const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
+
   let aggregated = '';
   const { text } = await callClaudeStream({
     system: systemMessage,
     user: prompt,
     maxTokens: TOKEN_BUDGETS.asset,
+    tag,
     onDelta: (chunk) => {
       aggregated += chunk;
       for (const trigger of triggers) {
@@ -1048,8 +1076,14 @@ export async function generateAssetContentStreaming(
   });
 
   onStatus('Completing generation...');
-  const parsed = extractJSON<AssetData>(text);
-  return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed)));
+  try {
+    const parsed = extractJSON<AssetData>(text);
+    if (tag) console.log(`${tag} json_parsed elapsed_ms=${elapsed()} text_len=${text.length}`);
+    return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed)));
+  } catch (err) {
+    if (tag) console.error(`${tag} json_parse_failed elapsed_ms=${elapsed()} text_len=${text.length}`);
+    throw err;
+  }
 }
 
 export async function generateAssetContent(
@@ -1081,6 +1115,7 @@ export async function generateQuickReceiptContent(
   receiptType: 'receipt' | 'paper_receipt' | 'hotel_folio' | 'airline_receipt',
   currency: string,
   onStatus: (status: string) => void,
+  reqId?: string,
 ): Promise<AssetData> {
   const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
 
@@ -1400,10 +1435,15 @@ Return ONLY valid JSON, no markdown or explanation.`;
 
   const userMessage = `Generate a ${receiptTypeLabel}${categoryLabel} based on this description:\n\n${cleanPrompt}`;
 
+  const tag = reqId ? `[quick-receipt ${reqId}]` : undefined;
+  const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
+
   const { text } = await callClaudeStream({
     system: systemMessage,
     user: userMessage,
     maxTokens: TOKEN_BUDGETS.receipt,
+    tag,
     onDelta: (chunk) => {
       aggregated += chunk;
       for (const trigger of triggers) {
@@ -1416,9 +1456,15 @@ Return ONLY valid JSON, no markdown or explanation.`;
   });
 
   onStatus('Finalizing receipt...');
-  const parsed = extractJSON<AssetData>(text);
   const resolvedType: AssetType = receiptType || 'receipt';
-  return stampAssetLogos(resolvedType, recalculateTotals(resolvedType, parsed));
+  try {
+    const parsed = extractJSON<AssetData>(text);
+    if (tag) console.log(`${tag} json_parsed elapsed_ms=${elapsed()} text_len=${text.length}`);
+    return stampAssetLogos(resolvedType, recalculateTotals(resolvedType, parsed));
+  } catch (err) {
+    if (tag) console.error(`${tag} json_parse_failed elapsed_ms=${elapsed()} text_len=${text.length}`);
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
