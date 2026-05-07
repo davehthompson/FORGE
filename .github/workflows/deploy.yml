@@ -47,13 +47,17 @@ jobs:
         run: npm ci
 
       # ---- Build ----
-      # Vite bakes VITE_* env vars into the bundle at build time. Set the
-      # logo.dev publishable token from a repo Variable so it isn't hardcoded
-      # in source (Ramplify's secret scanner rejects literal pk_*/sk_* assignments).
+      # Vite bakes VITE_* env vars into the bundle at build time. The repo
+      # Variable is named LOGO_DEV_KEY (single source of truth — same value
+      # is also injected into the running server as LOGO_DEV_KEY in Ramplify).
+      # Mapped here to VITE_LOGO_DEV_KEY so client-side getLogoUrl() keeps
+      # working as a fallback for any logo path not stamped server-side.
+      # The actual primary path is now server-side stamping via
+      # server/src/utils/logoUrl.ts; this is defense in depth.
       - name: Build client
         working-directory: client
         env:
-          VITE_LOGO_DEV_KEY: ${{ vars.VITE_LOGO_DEV_KEY }}
+          VITE_LOGO_DEV_KEY: ${{ vars.LOGO_DEV_KEY }}
         run: npm run build
 
       - name: Build server

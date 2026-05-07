@@ -4,6 +4,7 @@ import {
   enrichCompanyProfileStreaming,
   ClaudeError,
 } from './claude.js';
+import { buildLogoUrl } from '../utils/logoUrl.js';
 
 // ---------------------------------------------------------------------------
 // Domain enrichment via Claude + web_search.
@@ -11,8 +12,6 @@ import {
 // call. A single Claude call (with the hosted web_search tool) returns the
 // company profile and likely B2B spending categories in one round trip.
 // ---------------------------------------------------------------------------
-
-const LOGO_DEV_KEY = process.env.LOGO_DEV_KEY ?? '';
 
 function cleanDomainInput(domain: string): string {
   return domain.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
@@ -29,7 +28,7 @@ function buildCompanyProfile(
     employeeCount: enriched.employeeCount || 'Unknown',
     industry: toTitleCase(enriched.industry) || 'General Business',
     location: enriched.location || 'Unknown',
-    logo: getLogoUrl(cleanDomain),
+    logo: buildLogoUrl(cleanDomain),
     spendingCategories: Array.isArray(enriched.spendingCategories) && enriched.spendingCategories.length > 0
       ? enriched.spendingCategories
       : getDefaultCategories(),
@@ -92,29 +91,6 @@ function capitalizeSentences(str: string): string {
   return str
     .toLowerCase()
     .replace(/(^|[.!?]\s+)([a-z])/g, (_match, prefix, letter) => prefix + letter.toUpperCase());
-}
-
-function getLogoUrl(domain: string, size: number = 128): string {
-  // Skip building a URL when no token is configured — Logo.dev's image
-  // endpoint returns 401 for any request without a token, so it's better
-  // to ship an empty `logo` field and let the client render its icon
-  // fallback than to ship a guaranteed-broken URL.
-  if (!LOGO_DEV_KEY) return '';
-
-  const cleanDomain = domain
-    .replace(/^(https?:\/\/)?(www\.)?/, '')
-    .split('/')[0]
-    .toLowerCase();
-
-  const params = new URLSearchParams({
-    token: LOGO_DEV_KEY,
-    size: size.toString(),
-    format: 'png',
-    retina: 'true',
-    fallback: 'monogram',
-  });
-
-  return `https://img.logo.dev/${cleanDomain}?${params.toString()}`;
 }
 
 function getDefaultCategories(): string[] {

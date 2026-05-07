@@ -18,7 +18,9 @@ export function ReceiptTemplate({ data, scale = 1, currency = 'USD' }: ReceiptTe
     return formatWithSymbol(amount, currency);
   };
   const vendorDomain = normalizeDomain(data.vendor.domain);
-  const vendorLogoUrl = vendorDomain ? getLogoUrl(vendorDomain, { size: 48 }) : null;
+  const vendorLogoUrl =
+    data.vendor.logoUrl ||
+    (vendorDomain ? getLogoUrl(vendorDomain, { size: 48 }) : null);
   const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(vendorLogoUrl);
   const logoColors = useLogoColors(resolvedLogoUrl);
 

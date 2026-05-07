@@ -18,9 +18,9 @@ export function ContractTemplate({ data, scale = 1, currency = 'USD' }: Contract
     return formatWithSymbol(amount, currency);
   };
   const providerDomain = normalizeDomain(data.parties.provider.domain);
-  const providerLogoUrl = providerDomain
-    ? getLogoUrl(providerDomain, { size: 48 })
-    : null;
+  const providerLogoUrl =
+    data.parties.provider.logoUrl ||
+    (providerDomain ? getLogoUrl(providerDomain, { size: 48 }) : null);
   const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(providerLogoUrl);
   const logoColors = useLogoColors(resolvedLogoUrl);
 

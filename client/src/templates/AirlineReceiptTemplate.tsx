@@ -19,7 +19,9 @@ export function AirlineReceiptTemplate({ data, scale = 1, currency = 'USD' }: Ai
   };
 
   const airlineDomain = normalizeDomain(data.airline.domain);
-  const airlineLogoUrl = airlineDomain ? getLogoUrl(airlineDomain, { size: 80 }) : null;
+  const airlineLogoUrl =
+    data.airline.logoUrl ||
+    (airlineDomain ? getLogoUrl(airlineDomain, { size: 80 }) : null);
   const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(airlineLogoUrl);
   const logoColors = useLogoColors(resolvedLogoUrl);
 

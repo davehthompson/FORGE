@@ -15,6 +15,7 @@ import {
   HotelFolioData,
   AirlineReceiptData,
 } from '../types.js';
+import { buildLogoUrl } from '../utils/logoUrl.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -317,6 +318,84 @@ async function callClaudeStream(opts: StreamCallOpts): Promise<{
 // ---------------------------------------------------------------------------
 // Domain helpers (ported from openai.ts; behavior unchanged)
 // ---------------------------------------------------------------------------
+
+/**
+ * Pull a usable domain off Claude's output. Claude is asked for `domain`
+ * directly, but occasionally fills only `email` ("billing@example.com").
+ * Mirrors client/src/utils/domain.ts so server- and client-side fallback
+ * behavior stays consistent.
+ */
+function resolveAssetDomain(opts: { domain?: string; email?: string }): string {
+  if (opts.domain && opts.domain.trim()) return opts.domain.trim();
+  if (opts.email && opts.email.includes('@')) {
+    return opts.email.split('@')[1].trim();
+  }
+  return '';
+}
+
+/**
+ * Stamp a server-built Logo.dev URL onto the relevant entity in an asset
+ * payload (vendor / store / provider / airline / hotel). Mutates `data`
+ * in place and returns it.
+ *
+ * Mirrors what enrichment.ts already does for CompanyProfile.logo. Lets the
+ * client render logos without needing VITE_LOGO_DEV_KEY baked into the
+ * bundle — a single env var (LOGO_DEV_KEY, server-side) covers everything.
+ */
+export function stampAssetLogos(type: AssetType, data: AssetData): AssetData {
+  switch (type) {
+    case 'invoice':
+    case 'quote': {
+      const d = data as InvoiceData | QuoteData;
+      if (d.vendor) {
+        d.vendor.logoUrl = buildLogoUrl(
+          resolveAssetDomain({ domain: d.vendor.domain, email: d.vendor.email }),
+        );
+      }
+      break;
+    }
+    case 'receipt': {
+      const d = data as ReceiptData;
+      if (d.vendor) {
+        d.vendor.logoUrl = buildLogoUrl(resolveAssetDomain({ domain: d.vendor.domain }));
+      }
+      break;
+    }
+    case 'paper_receipt': {
+      const d = data as PaperReceiptData;
+      if (d.store) {
+        d.store.logoUrl = buildLogoUrl(resolveAssetDomain({ domain: d.store.domain }));
+      }
+      break;
+    }
+    case 'hotel_folio': {
+      const d = data as HotelFolioData;
+      if (d.hotel) {
+        d.hotel.logoUrl = buildLogoUrl(
+          resolveAssetDomain({ domain: d.hotel.domain, email: d.hotel.email }),
+        );
+      }
+      break;
+    }
+    case 'airline_receipt': {
+      const d = data as AirlineReceiptData;
+      if (d.airline) {
+        d.airline.logoUrl = buildLogoUrl(resolveAssetDomain({ domain: d.airline.domain }));
+      }
+      break;
+    }
+    case 'contract': {
+      const d = data as ContractData;
+      if (d.parties?.provider) {
+        d.parties.provider.logoUrl = buildLogoUrl(
+          resolveAssetDomain({ domain: d.parties.provider.domain }),
+        );
+      }
+      break;
+    }
+  }
+  return data;
+}
 
 function ensureLineItemIds(type: AssetType, data: AssetData): AssetData {
   if (type === 'invoice') {
@@ -970,7 +1049,7 @@ export async function generateAssetContentStreaming(
 
   onStatus('Completing generation...');
   const parsed = extractJSON<AssetData>(text);
-  return ensureLineItemIds(type, recalculateTotals(type, parsed));
+  return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed)));
 }
 
 export async function generateAssetContent(
@@ -990,7 +1069,7 @@ export async function generateAssetContent(
   });
 
   const parsed = extractJSON<AssetData>(text);
-  return ensureLineItemIds(type, recalculateTotals(type, parsed));
+  return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,7 +1417,8 @@ Return ONLY valid JSON, no markdown or explanation.`;
 
   onStatus('Finalizing receipt...');
   const parsed = extractJSON<AssetData>(text);
-  return recalculateTotals(receiptType || 'receipt', parsed);
+  const resolvedType: AssetType = receiptType || 'receipt';
+  return stampAssetLogos(resolvedType, recalculateTotals(resolvedType, parsed));
 }
 
 // ---------------------------------------------------------------------------

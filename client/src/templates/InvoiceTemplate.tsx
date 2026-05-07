@@ -21,7 +21,9 @@ export function InvoiceTemplate({ data, scale = 1, currency = 'USD' }: InvoiceTe
     domain: data.vendor.domain,
     email: data.vendor.email,
   });
-  const vendorLogoUrl = vendorDomain ? getLogoUrl(vendorDomain, { size: 64 }) : null;
+  const vendorLogoUrl =
+    data.vendor.logoUrl ||
+    (vendorDomain ? getLogoUrl(vendorDomain, { size: 64 }) : null);
   // Track which URL the logo actually loaded from (Logo.dev may 404, in which
   // case CompanyLogo falls back to Clearbit/Google). useLogoColors needs that
   // real URL so the extracted accent color matches the displayed image.

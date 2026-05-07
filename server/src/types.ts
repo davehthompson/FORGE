@@ -31,6 +31,8 @@ export interface InvoiceData {
     address: string;
     email: string;
     phone: string;
+    /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+    logoUrl?: string;
   };
   client: {
     name: string;
@@ -69,6 +71,8 @@ export interface ReceiptData {
     name: string;
     domain: string;  // For logo lookup
     address: string;
+    /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+    logoUrl?: string;
   };
   items: {
     description: string;
@@ -100,6 +104,8 @@ export interface PaperReceiptData {
     zip: string;
     phone: string;
     storeNumber?: string;
+    /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+    logoUrl?: string;
   };
   cashier?: string;
   register?: string;
@@ -145,6 +151,8 @@ export interface HotelFolioData {
     zip: string;
     phone: string;
     email?: string;
+    /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+    logoUrl?: string;
   };
   guest: {
     name: string;
@@ -190,6 +198,8 @@ export interface AirlineReceiptData {
     name: string;
     domain: string;
     logo?: string;
+    /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+    logoUrl?: string;
   };
   passenger: {
     name: string;
@@ -245,6 +255,8 @@ export interface QuoteData {
     address: string;
     email: string;
     phone: string;
+    /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+    logoUrl?: string;
   };
   client: {
     name: string;
@@ -276,6 +288,8 @@ export interface ContractData {
       domain: string;  // For logo lookup
       address: string;
       representative: string;
+      /** Server-stamped Logo.dev URL. See server/src/utils/logoUrl.ts. */
+      logoUrl?: string;
     };
     client: {
       name: string;

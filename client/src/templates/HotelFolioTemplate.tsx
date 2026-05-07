@@ -18,7 +18,9 @@ export function HotelFolioTemplate({ data, scale = 1, currency = 'USD' }: HotelF
   };
 
   const hotelDomain = normalizeDomain(data.hotel.domain);
-  const hotelLogoUrl = hotelDomain ? getLogoUrl(hotelDomain, { size: 80 }) : null;
+  const hotelLogoUrl =
+    data.hotel.logoUrl ||
+    (hotelDomain ? getLogoUrl(hotelDomain, { size: 80 }) : null);
   const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(hotelLogoUrl);
   const logoColors = useLogoColors(resolvedLogoUrl);
 

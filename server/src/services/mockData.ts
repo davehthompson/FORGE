@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { CompanyProfile, AssetType, InvoiceData, QuoteData, ContractData, AssetData, InvoiceConfig, RelatedAssetContext } from '../types.js';
+import { stampAssetLogos } from './claude.js';
 
 export const TEST_DOMAIN = 'ramptest.com';
 
@@ -385,24 +386,35 @@ export function getMockAsset(
   config?: InvoiceConfig,
   relatedAssets?: RelatedAssetContext,
 ): AssetData {
+  let asset: AssetData;
   switch (type) {
     case 'quote':
-      return getMockQuote();
+      asset = getMockQuote();
+      break;
     case 'contract':
-      return getMockContract(relatedAssets?.quote?.quoteNumber);
+      asset = getMockContract(relatedAssets?.quote?.quoteNumber);
+      break;
     case 'invoice':
-      return getMockInvoice(config, relatedAssets);
+      asset = getMockInvoice(config, relatedAssets);
+      break;
     case 'receipt':
-      return getMockReceipt();
+      asset = getMockReceipt();
+      break;
     case 'paper_receipt':
-      return getMockPaperReceipt();
+      asset = getMockPaperReceipt();
+      break;
     case 'hotel_folio':
-      return getMockHotelFolio();
+      asset = getMockHotelFolio();
+      break;
     case 'airline_receipt':
-      return getMockAirlineReceipt();
+      asset = getMockAirlineReceipt();
+      break;
     default:
-      return getMockInvoice();
+      asset = getMockInvoice();
   }
+  // Stamp Logo.dev URLs onto vendor/store/airline/hotel/provider so test-mode
+  // (ramptest.com path) renders end-to-end identically to real generations.
+  return stampAssetLogos(type, asset);
 }
 
 const STATUS_MESSAGES: Record<AssetType, string[]> = {

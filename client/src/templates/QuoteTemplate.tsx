@@ -21,7 +21,9 @@ export function QuoteTemplate({ data, scale = 1, currency = 'USD' }: QuoteTempla
     domain: data.vendor.domain,
     email: data.vendor.email,
   });
-  const vendorLogoUrl = vendorDomain ? getLogoUrl(vendorDomain, { size: 64 }) : null;
+  const vendorLogoUrl =
+    data.vendor.logoUrl ||
+    (vendorDomain ? getLogoUrl(vendorDomain, { size: 64 }) : null);
   const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | null>(vendorLogoUrl);
   const logoColors = useLogoColors(resolvedLogoUrl);
 
