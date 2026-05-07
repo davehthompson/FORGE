@@ -12,6 +12,7 @@ import { generateRouter } from './routes/generate.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { v1Router } from './routes/v1.js';
 import { apiKeyAuth } from './middleware/apiKey.js';
+import { cfAccessAuth } from './middleware/cfAccess.js';
 import { formatErrorResponse } from './services/claude.js';
 
 // Last-resort traps so a Node-level crash mid-request doesn't disappear
@@ -32,6 +33,11 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+// Decode the Cloudflare Access JWT once per request and stamp req.userEmail.
+// Mounted globally so every downstream route — /api/enrich, /api/generate,
+// /api/analytics, /api/v1 — can attribute its work to the logged-in user.
+// See [server/src/middleware/cfAccess.ts](./middleware/cfAccess.ts).
+app.use(cfAccessAuth);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

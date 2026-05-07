@@ -10,6 +10,13 @@ export interface GenerationEvent {
   currency: string;
   flowType: 'standard' | 'connected' | 'quick_receipt' | 'receipt_image';
   apiService?: string;
+  /**
+   * Email of the Cloudflare Access-authenticated user who triggered the
+   * generation. Set by the cfAccessAuth middleware via req.userEmail.
+   * Falls back to 'local-dev@ramp.com' for requests without the
+   * Cf-Access-Jwt-Assertion header (local dev, x-api-key callers).
+   */
+  userEmail?: string;
 }
 
 let pool: pg.Pool | null = null;
@@ -93,8 +100,8 @@ export function trackGeneration(event: GenerationEvent): void {
       if (!client) return;
       return client.query(
         `INSERT INTO generation_events
-          (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          (asset_type, spending_category, company_name, company_domain, currency, flow_type, api_service, user_email)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           event.assetType,
           event.spendingCategory,
@@ -103,6 +110,7 @@ export function trackGeneration(event: GenerationEvent): void {
           event.currency,
           event.flowType,
           event.apiService ?? '',
+          event.userEmail ?? '',
         ],
       );
     })
@@ -116,6 +124,7 @@ export async function getAnalyticsSummary() {
     total: 0,
     byType: [] as { type: string; count: number }[],
     byCategory: [] as { category: string; count: number }[],
+    byUser: [] as { email: string; count: number }[],
   };
 
   const client = await ensureTable();
@@ -137,6 +146,17 @@ export async function getAnalyticsSummary() {
      GROUP BY spending_category
      ORDER BY count DESC`,
   );
+  // Top users by event count. LIMIT 25 keeps the response small enough to
+  // render directly in the dashboard panel; if we ever want long-tail
+  // attribution, raw SQL against generation_events is always available.
+  const userRows = await client.query<{ user_email: string; count: number }>(
+    `SELECT user_email, COUNT(*)::int AS count
+     FROM generation_events
+     WHERE user_email != ''
+     GROUP BY user_email
+     ORDER BY count DESC
+     LIMIT 25`,
+  );
 
   return {
     total: totalRows.rows[0]?.total ?? 0,
@@ -145,6 +165,7 @@ export async function getAnalyticsSummary() {
       category: r.spending_category,
       count: r.count,
     })),
+    byUser: userRows.rows.map((r) => ({ email: r.user_email, count: r.count })),
   };
 }
 

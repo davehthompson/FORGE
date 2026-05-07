@@ -102,6 +102,7 @@ v1Router.post('/generate', async (req: Request, res: Response) => {
       currency,
       flowType: 'standard',
       apiService: req.serviceName,
+      userEmail: req.userEmail,
     });
   } catch (error) {
     console.error('[v1/generate] error:', error);
@@ -191,6 +192,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         currency,
         flowType: 'connected',
         apiService: req.serviceName,
+        userEmail: req.userEmail,
       });
     }
 
@@ -217,6 +219,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         currency,
         flowType: 'connected',
         apiService: req.serviceName,
+        userEmail: req.userEmail,
       });
     }
 
@@ -270,6 +273,7 @@ v1Router.post('/bundle', async (req: Request, res: Response) => {
         currency,
         flowType: 'connected',
         apiService: req.serviceName,
+        userEmail: req.userEmail,
       });
     }
 
@@ -326,6 +330,7 @@ v1Router.post('/receipt', async (req: Request, res: Response) => {
       currency,
       flowType: 'quick_receipt',
       apiService: req.serviceName,
+      userEmail: req.userEmail,
     });
   } catch (error) {
     console.error('[v1/receipt] error:', error);

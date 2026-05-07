@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Building2, Tag, FileText, Loader2, Globe } from 'lucide-react';
+import { X, BarChart3, Building2, Tag, FileText, Loader2, Globe, User } from 'lucide-react';
 
 interface AnalyticsSummary {
   total: number;
   byType: { type: string; count: number }[];
   byCategory: { category: string; count: number }[];
+  byUser: { email: string; count: number }[];
 }
 
 interface CompanyEntry {
@@ -40,6 +41,7 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showAllUsers, setShowAllUsers] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -87,13 +89,18 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
   const maxCategoryCount = summary?.byCategory.length
     ? Math.max(...summary.byCategory.map((c) => c.count))
     : 1;
+  // Defensive `?.` chain so older server payloads (pre-byUser deploy) don't
+  // crash the dashboard during a partial rollout.
+  const maxUserCount = summary?.byUser?.length
+    ? Math.max(...summary.byUser.map((u) => u.count))
+    : 1;
   const maxTimelineCount = timeline.length
     ? Math.max(...timeline.map((t) => t.count))
     : 1;
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto">
-      <div className="w-full max-w-4xl my-8 mx-4">
+      <div className="w-full max-w-6xl my-8 mx-4">
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-8 py-5 border-b border-ramp-stone">
@@ -134,8 +141,8 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
                   </p>
                 </div>
 
-                {/* Grid: By Type + By Category */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Grid: By Type + By Category + By User */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                   {/* By Asset Type */}
                   <div>
                     <div className="flex items-center gap-2 mb-4">
@@ -199,6 +206,58 @@ export function Analytics({ open, onClose }: AnalyticsProps) {
                           </div>
                         ))}
                       </div>
+                    ) : (
+                      <p className="text-sm text-ramp-gray-400">No data yet</p>
+                    )}
+                  </div>
+
+                  {/* By User (Cloudflare Access email) */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <User className="w-4 h-4 text-ramp-gray-600" />
+                      <h2 className="text-sm font-semibold text-ramp-slate uppercase tracking-wide">
+                        By User
+                      </h2>
+                    </div>
+                    {summary?.byUser?.length ? (
+                      <>
+                        <div className="space-y-3">
+                          {(showAllUsers ? summary.byUser : summary.byUser.slice(0, 10)).map(
+                            (item) => (
+                              <div key={item.email}>
+                                <div className="flex items-center justify-between text-sm mb-1 gap-2">
+                                  <span
+                                    className="text-ramp-slate truncate"
+                                    title={item.email}
+                                  >
+                                    {item.email}
+                                  </span>
+                                  <span className="font-medium text-ramp-slate flex-shrink-0">
+                                    {item.count}
+                                  </span>
+                                </div>
+                                <div className="h-2 bg-ramp-stone rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-ramp-sage rounded-full transition-all duration-500"
+                                    style={{ width: `${(item.count / maxUserCount) * 100}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                        {summary.byUser.length > 10 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllUsers((v) => !v)}
+                            className="mt-3 text-xs text-ramp-gray-500 hover:text-ramp-slate transition-colors"
+                          >
+                            {showAllUsers
+                              ? 'Show top 10'
+                              : `Show all ${summary.byUser.length}`}
+                          </button>
+                        )}
+                      </>
                     ) : (
                       <p className="text-sm text-ramp-gray-400">No data yet</p>
                     )}

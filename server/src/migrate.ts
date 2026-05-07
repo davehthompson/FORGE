@@ -45,12 +45,17 @@ async function main(): Promise<void> {
         company_domain TEXT NOT NULL DEFAULT '',
         currency TEXT NOT NULL DEFAULT 'USD',
         flow_type TEXT NOT NULL DEFAULT 'standard',
-        api_service TEXT NOT NULL DEFAULT ''
+        api_service TEXT NOT NULL DEFAULT '',
+        user_email TEXT NOT NULL DEFAULT ''
       )
     `);
     await pool.query(`
       ALTER TABLE generation_events
       ADD COLUMN IF NOT EXISTS api_service TEXT NOT NULL DEFAULT ''
+    `);
+    await pool.query(`
+      ALTER TABLE generation_events
+      ADD COLUMN IF NOT EXISTS user_email TEXT NOT NULL DEFAULT ''
     `);
     console.log('migrate: generation_events ready.');
   } finally {

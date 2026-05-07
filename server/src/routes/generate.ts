@@ -60,7 +60,7 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
     if (isTestDomain(company.domain || '')) {
       console.log(`🧪 Test mode — returning mock ${type}`);
       const mockData = getMockAsset(type);
-      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: 'standard' });
+      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: 'standard', userEmail: req.userEmail });
       return res.json({ success: true, data: mockData });
     }
     
@@ -73,6 +73,7 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
       companyDomain: company.domain,
       currency,
       flowType: 'standard',
+      userEmail: req.userEmail,
     });
 
     res.json({
@@ -132,7 +133,7 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
       }
       const mockData = getMockAsset(type, invoiceConfig, relatedAssets);
       stream.send('complete', { success: true, data: mockData });
-      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard' });
+      trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard', userEmail: req.userEmail });
       return stream.close();
     }
 
@@ -159,6 +160,7 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
         companyDomain: company.domain,
         currency,
         flowType: relatedAssets ? 'connected' : 'standard',
+        userEmail: req.userEmail,
       });
 
       stream.close();
@@ -228,6 +230,7 @@ generateRouter.post('/quick-receipt', async (req: Request<{}, {}, QuickReceiptRe
         companyDomain: '',
         currency,
         flowType: 'quick_receipt',
+        userEmail: req.userEmail,
       });
 
       stream.close();
@@ -285,6 +288,7 @@ generateRouter.post('/receipt-image', async (req: Request<{}, {}, ReceiptImageRe
       companyDomain: '',
       currency: 'USD',
       flowType: 'receipt_image',
+      userEmail: req.userEmail,
     });
 
     res.setHeader('Content-Type', mimeType);
