@@ -102,6 +102,14 @@ export async function enrichCompanyStreaming(
   const decoder = new TextDecoder();
   let buffer = '';
   let result: CompanyProfile | null = null;
+  // currentEvent MUST persist across reader.read() iterations. SSE frames are
+  // `event: <name>\ndata: <json>\n\n` and the two lines can land in different
+  // chunks (TCP segmentation, proxy flush boundaries, our 2-call res.write()
+  // on the server). If currentEvent resets every chunk, the data line on the
+  // far side of the boundary arrives tagged as '' and gets silently dropped —
+  // which manifests as a "succeeded server-side, threw NO_RESULT client-side"
+  // bug that bumps the user back to the previous step.
+  let currentEvent = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -112,8 +120,12 @@ export async function enrichCompanyStreaming(
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    let currentEvent = '';
     for (const line of lines) {
+      if (line === '') {
+        // Blank line terminates an SSE message — reset event tag for the next.
+        currentEvent = '';
+        continue;
+      }
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7);
       } else if (line.startsWith('data: ')) {
@@ -205,6 +217,12 @@ export async function generateAssetStreaming(
   //   - saw `complete` → result is set, this branch isn't reached
   let sawAnyStatus = false;
   let sawTerminalEvent = false;
+  // currentEvent MUST persist across reader.read() iterations — see the
+  // matching note in enrichCompanyStreaming. The bug it guards against:
+  // server emits `event: complete\n` then `data: {...}\n\n` as two writes;
+  // when those land in different reader chunks, a per-iteration reset would
+  // drop the data line silently and surface as NO_RESULT/GATEWAY_DROPPED.
+  let currentEvent = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -217,8 +235,11 @@ export async function generateAssetStreaming(
     const lines = buffer.split('\n');
     buffer = lines.pop() || ''; // Keep incomplete line in buffer
     
-    let currentEvent = '';
     for (const line of lines) {
+      if (line === '') {
+        currentEvent = '';
+        continue;
+      }
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7);
       } else if (line.startsWith('data: ')) {
@@ -543,6 +564,8 @@ export async function generateConnectedAssetsStreaming(
           const decoder = new TextDecoder();
           let buffer = '';
           let invoiceData: InvoiceData | null = null;
+          // currentEvent persists across reads — see enrichCompanyStreaming.
+          let currentEvent = '';
 
           while (true) {
             const { done, value } = await reader.read();
@@ -552,8 +575,11 @@ export async function generateConnectedAssetsStreaming(
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
 
-            let currentEvent = '';
             for (const line of lines) {
+              if (line === '') {
+                currentEvent = '';
+                continue;
+              }
               if (line.startsWith('event: ')) {
                 currentEvent = line.slice(7);
               } else if (line.startsWith('data: ')) {
@@ -705,6 +731,8 @@ export async function generateQuickReceipt(
   const decoder = new TextDecoder();
   let buffer = '';
   let result: AssetData | null = null;
+  // currentEvent persists across reads — see enrichCompanyStreaming.
+  let currentEvent = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -717,8 +745,11 @@ export async function generateQuickReceipt(
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    let currentEvent = '';
     for (const line of lines) {
+      if (line === '') {
+        currentEvent = '';
+        continue;
+      }
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7);
       } else if (line.startsWith('data: ')) {

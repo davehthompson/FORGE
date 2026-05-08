@@ -62,8 +62,14 @@ export function openSSE(res: Response): SSEStream {
   return {
     id,
     send(event, data) {
-      res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      // Coalesce event + data + terminator into a single res.write() call.
+      // Two writes here is correct per SSE spec but creates an avoidable flush
+      // boundary that, combined with TCP segmentation or proxy buffering, can
+      // deliver the event-tag line and the data line in different reader
+      // chunks on the client. Some client parsers (ours included historically)
+      // reset their `currentEvent` per chunk and silently drop the data line
+      // when that happens. One write keeps the frame atomic at the source.
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     },
     close() {
       clearInterval(heartbeat);
