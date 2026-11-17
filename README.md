@@ -14,7 +14,7 @@ An internal application for creating demo asset files (invoices, receipts, quote
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Vite
 - **Backend**: Node.js, Express, TypeScript
-- **AI (text)**: Anthropic Claude Opus 4.7 (asset/receipt generation + domain enrichment via the hosted `web_search` tool)
+- **AI (text)**: Claude Opus 4.7 via Ramplify `ramp-router` integrations proxy (asset/receipt generation + domain enrichment via hosted `web_search`)
 - **AI (images)**: Google Gemini (paper-receipt photorealistic image generation)
 - **Logos**: logo.dev (publishable token)
 - **Export**: Browser-side PDF/JPG via [`html-to-image`](https://github.com/bubkoo/html-to-image) + [`pdf-lib`](https://pdf-lib.js.org/) — captures the same React templates the editor renders, no headless browser on the server
@@ -43,14 +43,16 @@ Create a `.env` file in the `server` directory with your API keys:
 
 ```env
 PORT=3001
-ANTHROPIC_API_KEY=your_anthropic_api_key
+INTEGRATIONS_URL=       # Ramplify injects after granting ramp-router
+INTEGRATIONS_KEY=       # Ramplify injects after granting ramp-router
+ROUTER_API_KEY=         # from https://internal.router.com — set in Ramplify Settings
 GEMINI_API_KEY=your_gemini_api_key
 LOGO_DEV_KEY=your_logo_dev_publishable_key
 DATABASE_URL=  # leave blank locally; Ramplify injects the real value in prod
 ```
 
 **Note:** Required keys:
-- **Anthropic API Key**: Used for company enrichment (via Claude's hosted `web_search` tool) and all text-asset generation. Get one at [console.anthropic.com](https://console.anthropic.com).
+- **Ramplify ramp-router**: Claude (asset generation + domain enrichment via `web_search`) is called through the integrations proxy at `${INTEGRATIONS_URL}/ramp-router`. Grant **ramp-router** on the app's Integrations tab (injects `INTEGRATIONS_URL` + `INTEGRATIONS_KEY`), then add `ROUTER_API_KEY` in Settings from [internal.router.com](https://internal.router.com).
 - **Gemini API Key**: Used only for paper-receipt photorealistic image generation. Get one at [aistudio.google.com](https://aistudio.google.com).
 - **Logo.dev Key**: Publishable (`pk_*`) token used to render company/vendor logos in PDFs and the editor. Get one at [logo.dev](https://logo.dev).
 - **Database URL**: Postgres connection string for analytics. In production this is provided automatically by Ramplify when the app's managed database is enabled. Leave blank locally to disable analytics — the app will still run, just without `generation_events` persistence.

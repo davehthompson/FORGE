@@ -150,22 +150,26 @@ function mapClaudeError(err: unknown): ClaudeError {
     message?: string;
   };
   if (e?.status === 401 || e?.status === 403) {
-    return new ClaudeError('AUTH_ERROR', 'Anthropic API authentication failed', err);
+    return new ClaudeError(
+      'AUTH_ERROR',
+      'AI proxy authentication failed (check ramp-router grant + ROUTER_API_KEY)',
+      err,
+    );
   }
   if (e?.status === 429) {
-    return new ClaudeError('API_ERROR', 'Anthropic API rate limit hit', err);
+    return new ClaudeError('API_ERROR', 'AI service rate limit hit', err);
   }
   if (typeof e?.status === 'number' && e.status >= 500 && e.status < 600) {
-    return new ClaudeError('API_ERROR', `Anthropic API server error (${e.status})`, err);
+    return new ClaudeError('API_ERROR', `AI service server error (${e.status})`, err);
   }
   if (
     e?.name === 'AbortError' ||
     e?.code === 'ETIMEDOUT' ||
     (typeof e?.message === 'string' && /timeout|timed out/i.test(e.message))
   ) {
-    return new ClaudeError('TIMEOUT', 'Request to Anthropic timed out', err);
+    return new ClaudeError('TIMEOUT', 'AI service request timed out', err);
   }
-  return new ClaudeError('API_ERROR', e?.message || 'Anthropic API request failed', err);
+  return new ClaudeError('API_ERROR', e?.message || 'AI service request failed', err);
 }
 
 // ---------------------------------------------------------------------------
@@ -173,16 +177,50 @@ function mapClaudeError(err: unknown): ClaudeError {
 // ---------------------------------------------------------------------------
 
 let cachedClient: Anthropic | null = null;
+/**
+ * Claude traffic goes through Ramplify's integrations proxy (`ramp-router`),
+ * not directly to api.anthropic.com. The proxy injects upstream credentials;
+ * we authenticate to the proxy with INTEGRATIONS_KEY + ROUTER_API_KEY.
+ *
+ * Final request URL shape (Anthropic SDK appends `/v1/messages`):
+ *   `${INTEGRATIONS_URL}/ramp-router/v1/messages`
+ */
 function getClient(): Anthropic {
   if (cachedClient) return cachedClient;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || apiKey === 'your_anthropic_api_key_here') {
+
+  const integrationsUrl = process.env.INTEGRATIONS_URL?.replace(/\/+$/, '');
+  const integrationsKey = process.env.INTEGRATIONS_KEY;
+  const routerApiKey = process.env.ROUTER_API_KEY;
+
+  if (!integrationsUrl) {
     throw new ClaudeError(
       'AUTH_ERROR',
-      'ANTHROPIC_API_KEY is not configured. Please add your Anthropic API key to the environment.',
+      'INTEGRATIONS_URL is not configured. Grant ramp-router on the Ramplify Integrations tab (injected automatically after grant).',
     );
   }
-  cachedClient = new Anthropic({ apiKey });
+  if (!integrationsKey) {
+    throw new ClaudeError(
+      'AUTH_ERROR',
+      'INTEGRATIONS_KEY is not configured. Grant ramp-router on the Ramplify Integrations tab (injected automatically after grant).',
+    );
+  }
+  if (!routerApiKey) {
+    throw new ClaudeError(
+      'AUTH_ERROR',
+      'ROUTER_API_KEY is not configured. Add it in Ramplify Settings (from https://internal.router.com).',
+    );
+  }
+
+  cachedClient = new Anthropic({
+    // Don't send x-api-key / pick up a leftover ANTHROPIC_API_KEY from env —
+    // ramp-router expects Bearer auth via ROUTER_API_KEY instead.
+    apiKey: null,
+    authToken: routerApiKey,
+    baseURL: `${integrationsUrl}/ramp-router`,
+    defaultHeaders: {
+      'X-Integrations-Key': integrationsKey,
+    },
+  });
   return cachedClient;
 }
 

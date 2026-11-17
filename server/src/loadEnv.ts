@@ -5,7 +5,7 @@
 // resolved before any of that file's runtime code runs. That means calling
 // `dotenv.config()` *inside* `index.ts` happens too late — the service
 // modules transitively imported above it have already captured `undefined`
-// for things like `LOGO_DEV_KEY` and `ANTHROPIC_API_KEY` at the top of
+// for things like `LOGO_DEV_KEY` and `ROUTER_API_KEY` at the top of
 // their own module bodies.
 //
 // By isolating `dotenv.config()` in this module and importing it first, we
