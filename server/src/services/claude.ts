@@ -21,16 +21,30 @@ import { buildLogoUrl } from '../utils/logoUrl.js';
 // Config
 // ---------------------------------------------------------------------------
 
-const MODEL = 'claude-opus-4-7';
 const TIMEOUT_MS = 60_000;
 
-// Per-call-site token budgets. Tuned for Claude Opus 4.7's 128k output ceiling
-// but kept tight to control cost. See plan: claude_opus_4.7_migration.
+// Per-call-site token budgets. Kept tight to control cost through Router.
 const TOKEN_BUDGETS = {
   asset: 8000,
   receipt: 6000,
   enrichment: 4000,
 } as const;
+
+/**
+ * Router model IDs are account-specific (from GET /v1/models on Router) —
+ * never hardcode a provider public name like `claude-opus-4-7`.
+ * Accepts ROUTER_MODEL or the Router-docs alias RAMP_ROUTER_MODEL.
+ */
+function getModel(): string {
+  const model = process.env.ROUTER_MODEL || process.env.RAMP_ROUTER_MODEL;
+  if (!model) {
+    throw new ClaudeError(
+      'AUTH_ERROR',
+      'ROUTER_MODEL is not configured. Set it in Ramplify Settings to a model id from https://internal.router.com (Models).',
+    );
+  }
+  return model;
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -178,12 +192,15 @@ function mapClaudeError(err: unknown): ClaudeError {
 
 let cachedClient: Anthropic | null = null;
 /**
- * Claude traffic goes through Ramplify's integrations proxy (`ramp-router`),
- * not directly to api.anthropic.com. The proxy injects upstream credentials;
- * we authenticate to the proxy with INTEGRATIONS_KEY + ROUTER_API_KEY.
+ * All LLM traffic goes through Ramplify's `ramp-router` integrations proxy —
+ * never to api.anthropic.com. Auth to the proxy uses INTEGRATIONS_KEY; auth
+ * to Router uses ROUTER_API_KEY as a Bearer token.
  *
- * Final request URL shape (Anthropic SDK appends `/v1/messages`):
- *   `${INTEGRATIONS_URL}/ramp-router/v1/messages`
+ * Path rewrite: the Anthropic SDK always requests `/v1/messages`, but the
+ * ramp-router upstream is already registered as `https://internal-api.router.com/v1`.
+ * The proxy concatenates upstream + remainder, so leaving the SDK's `/v1`
+ * intact produces `/v1/v1/messages` → Go mux "404 page not found". We strip
+ * the SDK's `/v1` after `/ramp-router` so the upstream sees `/messages`.
  */
 function getClient(): Anthropic {
   if (cachedClient) return cachedClient;
@@ -211,14 +228,33 @@ function getClient(): Anthropic {
     );
   }
 
+  const baseURL = `${integrationsUrl}/ramp-router`;
+  console.log(`[router] client_init baseURL=${baseURL}`);
+
   cachedClient = new Anthropic({
     // Don't send x-api-key / pick up a leftover ANTHROPIC_API_KEY from env —
     // ramp-router expects Bearer auth via ROUTER_API_KEY instead.
     apiKey: null,
     authToken: routerApiKey,
-    baseURL: `${integrationsUrl}/ramp-router`,
+    baseURL,
     defaultHeaders: {
       'X-Integrations-Key': integrationsKey,
+    },
+    fetch: (input, init) => {
+      const raw =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const url = new URL(raw);
+      // /.../ramp-router/v1/messages -> /.../ramp-router/messages
+      const before = url.pathname;
+      url.pathname = url.pathname.replace(/(\/ramp-router)\/v1(?=\/|$)/, '$1');
+      if (url.pathname !== before) {
+        console.log(`[router] path_rewrite ${before} -> ${url.pathname}`);
+      }
+      return globalThis.fetch(url, init);
     },
   });
   return cachedClient;
@@ -281,7 +317,7 @@ async function callClaude(opts: CallOpts): Promise<{
   try {
     response = await client.messages.create(
       {
-        model: MODEL,
+        model: getModel(),
         max_tokens: opts.maxTokens,
         system: opts.system,
         messages: [{ role: 'user', content: opts.user }],
@@ -307,8 +343,8 @@ interface StreamCallOpts extends CallOpts {
   onDelta?: (text: string) => void;
   /**
    * Optional log tag (e.g. `[generate a3f2]`). When provided, the helper
-   * emits structured `<tag> claude_request_sent / text_delta_first /
-   * stop_reason / claude_threw / truncated` lines with `elapsed_ms`.
+   * emits structured `<tag> router_request_sent / text_delta_first /
+   * stop_reason / router_threw / truncated` lines with `elapsed_ms`.
    * Mirrors the manual logging in `attemptEnrichCompanyProfileStreaming`
    * so any caller that threads a reqId through gets the same Ramplify
    * gateway-drop diagnostics for free.
@@ -328,12 +364,12 @@ async function callClaudeStream(opts: StreamCallOpts): Promise<{
   const elapsed = () => Date.now() - startedAt;
   let firstTextDeltaSeen = false;
 
-  if (tag) console.log(`${tag} claude_request_sent elapsed_ms=${elapsed()} max_tokens=${opts.maxTokens}`);
+  if (tag) console.log(`${tag} router_request_sent elapsed_ms=${elapsed()} max_tokens=${opts.maxTokens}`);
 
   try {
     const stream = client.messages.stream(
       {
-        model: MODEL,
+        model: getModel(),
         max_tokens: opts.maxTokens,
         system: opts.system,
         messages: [{ role: 'user', content: opts.user }],
@@ -360,7 +396,7 @@ async function callClaudeStream(opts: StreamCallOpts): Promise<{
       }
     }
   } catch (err) {
-    if (tag) console.error(`${tag} claude_threw elapsed_ms=${elapsed()} text_len=${text.length}`);
+    if (tag) console.error(`${tag} router_threw elapsed_ms=${elapsed()} text_len=${text.length}`);
     throw mapClaudeError(err);
   }
 
@@ -1506,7 +1542,7 @@ Return ONLY valid JSON, no markdown or explanation.`;
 }
 
 // ---------------------------------------------------------------------------
-// Public API: company enrichment via web_search
+// Public API: company enrichment via Router (no Anthropic server tools)
 // ---------------------------------------------------------------------------
 
 export interface EnrichedCompanyData {
@@ -1518,9 +1554,9 @@ export interface EnrichedCompanyData {
   spendingCategories: string[];
 }
 
-const ENRICHMENT_SYSTEM = `You are a research assistant. Your job is to look up a company by its website domain and return a structured profile.
+const ENRICHMENT_SYSTEM = `You are a research assistant. Your job is to produce a structured company profile from a website domain.
 
-Use the web_search tool to find current, accurate information. Search for the company name, "about" page, "careers" or LinkedIn pages for employee count, headquarters address, and industry.
+Use your knowledge of the company behind the domain. Do not claim you browsed the live web.
 
 Return ONLY a single JSON object with this exact shape (no markdown, no explanation, no prose):
 
@@ -1533,29 +1569,20 @@ Return ONLY a single JSON object with this exact shape (no markdown, no explanat
   "spendingCategories": ["array of 5-7 likely B2B expense categories for this specific company based on its industry and size"]
 }
 
-If the company cannot be found via web search, generate a reasonable profile from your training knowledge of the domain. Always return valid JSON in the exact shape above.`;
+If you are unsure about the company, generate a reasonable profile from the domain name and any knowledge you have. Always return valid JSON in the exact shape above.`;
 
 function buildEnrichmentUserMessage(cleanDomain: string): string {
-  return `Look up the company at the website domain "${cleanDomain}" and return their profile.
+  return `Produce a company profile for the website domain "${cleanDomain}".
 
-Search for:
-1. Their company name and what they do (description)
-2. Their headquarters address (full street address if available)
-3. Their employee count (LinkedIn, Crunchbase, or annual report)
-4. Their industry classification
-
-Then identify the 5-7 most likely B2B spending categories this specific company would have based on their industry, size, and business model. Be specific to their actual operations - avoid generic categories unless they truly apply.
+Cover:
+1. Company name and what they do (description)
+2. Headquarters address (full street address if known)
+3. Employee count
+4. Industry classification
+5. The 5-7 most likely B2B spending categories for this specific company based on industry, size, and business model — be specific to their operations
 
 Return only the JSON profile.`;
 }
-
-const ENRICHMENT_TOOLS: Anthropic.Messages.ToolUnion[] = [
-  {
-    type: 'web_search_20260209',
-    name: 'web_search',
-    max_uses: 5,
-  },
-];
 
 function validateEnriched(parsed: EnrichedCompanyData): EnrichedCompanyData {
   if (!parsed.name || !parsed.spendingCategories || !Array.isArray(parsed.spendingCategories)) {
@@ -1574,7 +1601,6 @@ async function attemptEnrichCompanyProfile(
     system: ENRICHMENT_SYSTEM,
     user: buildEnrichmentUserMessage(cleanDomain),
     maxTokens: TOKEN_BUDGETS.enrichment,
-    tools: ENRICHMENT_TOOLS,
   });
   return validateEnriched(extractJSON<EnrichedCompanyData>(text));
 }
@@ -1589,13 +1615,9 @@ export async function enrichCompanyProfile(
 
 /**
  * Streaming variant of `enrichCompanyProfile`. Reports progress via `onStatus`
- * by listening for `server_tool_use` (web search initiated) and
- * `web_search_tool_result` (search completed) content blocks, plus field-name
- * triggers in the streamed JSON output.
+ * using field-name triggers in the streamed JSON output.
  *
- * On PARSE_ERROR (Claude returned text the repair pass couldn't fix) the call
- * is retried once silently — the user only sees a "still working..." status
- * blip, not an error. See `withParseRetry`.
+ * On PARSE_ERROR the call is retried once silently — see `withParseRetry`.
  */
 export async function enrichCompanyProfileStreaming(
   cleanDomain: string,
@@ -1627,13 +1649,13 @@ async function attemptEnrichCompanyProfileStreaming(
   if (attempt > 1) {
     console.log(`${tag} retry attempt=${attempt} elapsed_ms=${elapsed()}`);
     onStatus('Refining results...');
+  } else {
+    onStatus('Looking up company profile...');
   }
 
   let text = '';
   let stopReason: Anthropic.Message['stop_reason'] = null;
-  let searchCount = 0;
   let firstTextDeltaSeen = false;
-  const searchStartTimes = new Map<number, number>();
   const triggeredFields = new Set<string>();
   const FIELD_TRIGGERS: Array<{ field: string; message: string }> = [
     { field: '"name"', message: 'Identifying company name...' },
@@ -1645,40 +1667,19 @@ async function attemptEnrichCompanyProfileStreaming(
   ];
 
   try {
-    console.log(`${tag} claude_request_sent elapsed_ms=${elapsed()} attempt=${attempt}`);
+    console.log(`${tag} router_request_sent elapsed_ms=${elapsed()} attempt=${attempt}`);
     const stream = client.messages.stream(
       {
-        model: MODEL,
+        model: getModel(),
         max_tokens: TOKEN_BUDGETS.enrichment,
         system: ENRICHMENT_SYSTEM,
         messages: [{ role: 'user', content: buildEnrichmentUserMessage(cleanDomain) }],
-        tools: ENRICHMENT_TOOLS,
       },
       { timeout: TIMEOUT_MS },
     );
 
     for await (const event of stream) {
-      if (event.type === 'content_block_start') {
-        const block = event.content_block;
-        if (block.type === 'server_tool_use' && block.name === 'web_search') {
-          searchCount += 1;
-          searchStartTimes.set(searchCount, Date.now());
-          console.log(`${tag} web_search_start n=${searchCount} elapsed_ms=${elapsed()}`);
-          onStatus(
-            searchCount === 1
-              ? 'Searching the web for company info...'
-              : `Searching the web (${searchCount}/5)...`,
-          );
-        } else if (block.type === 'web_search_tool_result') {
-          const startedAtSearch = searchStartTimes.get(searchCount);
-          const searchMs = startedAtSearch !== undefined ? Date.now() - startedAtSearch : null;
-          console.log(
-            `${tag} web_search_end n=${searchCount} elapsed_ms=${elapsed()}` +
-              (searchMs !== null ? ` search_ms=${searchMs}` : ''),
-          );
-          onStatus('Reviewing search results...');
-        }
-      } else if (
+      if (
         event.type === 'content_block_delta' &&
         event.delta.type === 'text_delta'
       ) {
@@ -1705,7 +1706,7 @@ async function attemptEnrichCompanyProfileStreaming(
   } catch (err) {
     const mapped = mapClaudeError(err);
     console.error(
-      `${tag} claude_threw elapsed_ms=${elapsed()} searches=${searchCount} text_len=${text.length} code=${mapped.code} message=${JSON.stringify(mapped.message)}`,
+      `${tag} router_threw elapsed_ms=${elapsed()} text_len=${text.length} code=${mapped.code} message=${JSON.stringify(mapped.message)}`,
     );
     throw mapped;
   }
@@ -1721,7 +1722,7 @@ async function attemptEnrichCompanyProfileStreaming(
   try {
     const parsed = validateEnriched(extractJSON<EnrichedCompanyData>(text));
     console.log(
-      `${tag} json_parsed elapsed_ms=${elapsed()} text_len=${text.length} searches=${searchCount}`,
+      `${tag} json_parsed elapsed_ms=${elapsed()} text_len=${text.length}`,
     );
     return parsed;
   } catch (err) {
