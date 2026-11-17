@@ -34,6 +34,9 @@ const TOKEN_BUDGETS = {
  * Router model IDs are account-specific (from GET /v1/models on Router) —
  * never hardcode a provider public name like `claude-opus-4-7`.
  * Accepts ROUTER_MODEL or the Router-docs alias RAMP_ROUTER_MODEL.
+ *
+ * Note: `workload_slug` selects routing *strategy* (cost/flex/throughput),
+ * not the model. Router still requires `model` on every request.
  */
 function getModel(): string {
   const model = process.env.ROUTER_MODEL || process.env.RAMP_ROUTER_MODEL;
@@ -44,6 +47,11 @@ function getModel(): string {
     );
   }
   return model;
+}
+
+/** Application workload slug — applies cost/flex routing settings. */
+function getWorkloadSlug(): string {
+  return process.env.ROUTER_WORKLOAD_SLUG || 'general-production';
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +237,8 @@ function getClient(): Anthropic {
   }
 
   const baseURL = `${integrationsUrl}/ramp-router`;
-  console.log(`[router] client_init baseURL=${baseURL}`);
+  const workloadSlug = getWorkloadSlug();
+  console.log(`[router] client_init baseURL=${baseURL} workload_slug=${workloadSlug}`);
 
   cachedClient = new Anthropic({
     // Don't send x-api-key / pick up a leftover ANTHROPIC_API_KEY from env —
@@ -254,7 +263,23 @@ function getClient(): Anthropic {
       if (url.pathname !== before) {
         console.log(`[router] path_rewrite ${before} -> ${url.pathname}`);
       }
-      return globalThis.fetch(url, init);
+
+      // Anthropic SDK doesn't know about Router-only fields. Inject
+      // workload_slug into the JSON body so cost-efficient routing applies.
+      let nextInit = init;
+      if (init?.body && typeof init.body === 'string') {
+        try {
+          const body = JSON.parse(init.body) as Record<string, unknown>;
+          if (body.workload_slug === undefined) {
+            body.workload_slug = workloadSlug;
+            nextInit = { ...init, body: JSON.stringify(body) };
+          }
+        } catch {
+          // Non-JSON body — leave untouched.
+        }
+      }
+
+      return globalThis.fetch(url, nextInit);
     },
   });
   return cachedClient;
