@@ -14,6 +14,8 @@ import {
   PaperReceiptData,
   HotelFolioData,
   AirlineReceiptData,
+  TaxConfig,
+  DiscountConfig,
 } from '../types.js';
 import { buildLogoUrl } from '../utils/logoUrl.js';
 
@@ -700,12 +702,45 @@ Exempt categories: Agricultural products in original state (rice, corn, raw suga
 Most goods and services: 12%. Show as a single "VAT" line at 12%.`,
 };
 
-function getTaxGuidance(currency: string): string {
+/** Legacy inventing guidance — only for quick-receipt flows not yet on setup controls. */
+function getLegacyTaxGuidance(currency: string): string {
   const guidance = TAX_CONFIG[currency];
   if (guidance) {
     return `TAX RULES FOR ${currency} REGION:\n${guidance}`;
   }
   return 'Apply a reasonable local tax rate for the region. Label the tax appropriately (e.g., "VAT", "GST", "Sales Tax").';
+}
+
+function getTaxGuidance(currency: string, taxConfig?: TaxConfig): string {
+  if (!taxConfig?.apply) {
+    return `TAX RULES:
+- Do NOT apply any sales tax, VAT, GST, or similar.
+- taxes array MUST be empty ([]).
+- taxTotal / tax / taxAmount MUST be 0.
+- Do not invent tax lines or rates.`;
+  }
+
+  const ratePercent = round2(taxConfig.rate * 100);
+  return `TAX RULES (USER-CONFIGURED — DO NOT INVENT):
+- Apply exactly one tax line: name="${taxConfig.name}", rate=${taxConfig.rate} (${ratePercent}%).
+- Do not invent additional tax lines or change the rate/name.
+- amounts will be recomputed server-side as subtotal * rate.
+
+Regional context for ${currency} (for labeling only; rate is fixed above):
+${TAX_CONFIG[currency] || 'Use the exact tax name and rate provided above.'}`;
+}
+
+function getDiscountGuidance(discountConfig?: DiscountConfig): string {
+  if (!discountConfig?.apply) {
+    return `DISCOUNT RULES:
+- Do NOT apply any volume, promo, or negotiated discount.
+- quote.discount MUST be 0 (or omitted).
+- Do not invent discounts on line items.`;
+  }
+  return `DISCOUNT RULES (USER-CONFIGURED — DO NOT INVENT):
+- Apply a quote discount of exactly ${discountConfig.percent}% of subtotal.
+- discount amount = subtotal * ${discountConfig.percent}/100 (server will recompute).
+- Do not invent a different discount.`;
 }
 
 const B2B_TAX_RULES = `
@@ -760,7 +795,56 @@ GENERAL RULE:
 - Always show the tax treatment clearly on the invoice with appropriate notes
 `;
 
-function recalculateTotals(type: AssetType, data: AssetData): AssetData {
+/**
+ * Recompute totals and stamp tax/discount from user config when provided.
+ *
+ * - taxConfig/discountConfig undefined → legacy path (keep AI values; used by
+ *   quick-receipt). Still never invents an 8% fallback when AI omitted tax.
+ * - apply:false → force zero tax / zero discount (AssetSelector default).
+ * - apply:true → stamp exact user rate/name or discount percent.
+ */
+function recalculateTotals(
+  type: AssetType,
+  data: AssetData,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
+): AssetData {
+  const taxProvided = taxConfig !== undefined;
+  const applyTax = Boolean(taxConfig?.apply);
+  const taxRate = applyTax ? Math.max(0, taxConfig!.rate) : 0;
+  const taxName = applyTax ? (taxConfig!.name || 'Sales Tax') : 'Tax';
+
+  const stampTax = <T extends { taxes?: { name: string; rate: number; amount: number }[]; taxTotal?: number; tax?: number }>(
+    d: T,
+    subtotal: number,
+  ): void => {
+    if (taxProvided) {
+      if (applyTax) {
+        d.taxes = [{ name: taxName, rate: taxRate, amount: round2(subtotal * taxRate) }];
+        d.taxTotal = d.taxes[0].amount;
+      } else {
+        d.taxes = [];
+        d.taxTotal = 0;
+      }
+      if ('tax' in d) d.tax = d.taxTotal;
+      return;
+    }
+    // Legacy: keep AI taxes if present; otherwise leave at zero (no 8% invent).
+    if (d.taxes?.length) {
+      d.taxes.forEach((t) => {
+        t.amount = round2(subtotal * t.rate);
+      });
+      d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
+    } else if (d.tax) {
+      d.taxes = [{ name: 'Tax', rate: subtotal > 0 ? round2(d.tax / subtotal) : 0, amount: round2(d.tax) }];
+      d.taxTotal = round2(d.tax);
+    } else {
+      d.taxes = [];
+      d.taxTotal = 0;
+    }
+    if ('tax' in d) d.tax = d.taxTotal;
+  };
+
   switch (type) {
     case 'invoice': {
       const d = data as InvoiceData;
@@ -769,64 +853,49 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
         item.total = round2(item.quantity * item.unitPrice);
       });
       d.subtotal = round2(d.lineItems.reduce((sum, item) => sum + item.total, 0));
-      if (d.taxes?.length) {
-        d.taxes.forEach((t) => {
-          t.amount = round2(d.subtotal * t.rate);
-        });
-        d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
-      } else if (d.tax) {
-        d.taxes = [{ name: 'Tax', rate: d.subtotal > 0 ? round2(d.tax / d.subtotal) : 0, amount: round2(d.tax) }];
-        d.taxTotal = round2(d.tax);
-      } else {
-        d.taxes = [{ name: 'Tax', rate: 0.08, amount: round2(d.subtotal * 0.08) }];
-        d.taxTotal = d.taxes[0].amount;
-      }
-      d.tax = d.taxTotal!;
-      d.total = round2(d.subtotal + d.taxTotal!);
+      stampTax(d, d.subtotal);
+      d.total = round2(d.subtotal + (d.taxTotal || 0));
       return d;
     }
     case 'receipt': {
       const d = data as ReceiptData;
       if (!d.items?.length) return data;
       d.subtotal = round2(d.items.reduce((sum, item) => sum + round2(item.quantity * item.price), 0));
-      if (d.taxes?.length) {
-        d.taxes.forEach((t) => {
-          t.amount = round2(d.subtotal * t.rate);
-        });
-        d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
-      } else if (d.tax) {
-        d.taxes = [{ name: 'Tax', rate: d.subtotal > 0 ? round2(d.tax / d.subtotal) : 0, amount: round2(d.tax) }];
-        d.taxTotal = round2(d.tax);
-      } else {
-        d.taxes = [{ name: 'Tax', rate: 0.08, amount: round2(d.subtotal * 0.08) }];
-        d.taxTotal = d.taxes[0].amount;
-      }
-      d.tax = d.taxTotal!;
+      stampTax(d, d.subtotal);
       const tip = d.tip ? round2(d.tip) : 0;
-      d.total = round2(d.subtotal + d.taxTotal! + tip);
+      d.total = round2(d.subtotal + (d.taxTotal || 0) + tip);
       return d;
     }
     case 'paper_receipt': {
       const d = data as PaperReceiptData;
       if (!d.items?.length) return data;
       d.items.forEach((item) => {
-        item.total = round2(item.quantity * item.unitPrice);
+        item.total = round2(item.quantity * item.unitPrice - (item.discount || 0));
       });
       d.subtotal = round2(d.items.reduce((sum, item) => sum + item.total, 0));
-      if (d.taxes?.length) {
+      if (taxProvided) {
+        if (applyTax) {
+          d.taxes = [{ name: taxName, rate: taxRate, amount: round2(d.subtotal * taxRate) }];
+          d.taxTotal = d.taxes[0].amount;
+        } else {
+          d.taxes = [];
+          d.taxTotal = 0;
+        }
+        d.taxRate = applyTax ? taxRate : 0;
+      } else if (d.taxes?.length) {
         d.taxes.forEach((t) => {
           t.amount = round2(d.subtotal * t.rate);
         });
         d.taxTotal = round2(d.taxes.reduce((sum, t) => sum + t.amount, 0));
+        d.taxRate = d.taxes[0]?.rate || 0;
       } else {
-        const rate = d.taxRate || 0.0825;
-        d.taxes = [{ name: 'Tax', rate, amount: round2(d.subtotal * rate) }];
-        d.taxTotal = d.taxes[0].amount;
+        d.taxes = [];
+        d.taxTotal = 0;
+        d.taxRate = 0;
       }
-      d.taxAmount = d.taxTotal!;
-      d.taxRate = d.taxes[0]?.rate || 0;
+      d.taxAmount = d.taxTotal || 0;
       const tip = d.tip ? round2(d.tip) : 0;
-      d.total = round2(d.subtotal + d.taxTotal! + tip);
+      d.total = round2(d.subtotal + (d.taxTotal || 0) + tip);
       return d;
     }
     case 'quote': {
@@ -836,6 +905,13 @@ function recalculateTotals(type: AssetType, data: AssetData): AssetData {
         item.total = round2(item.quantity * item.unitPrice);
       });
       d.subtotal = round2(d.items.reduce((sum, item) => sum + item.total, 0));
+      if (discountConfig !== undefined) {
+        d.discount = discountConfig.apply
+          ? round2(d.subtotal * (Math.max(0, discountConfig.percent) / 100))
+          : 0;
+      } else if (d.discount == null) {
+        d.discount = 0;
+      }
       d.total = round2(d.subtotal - (d.discount || 0));
       return d;
     }
@@ -1085,6 +1161,8 @@ function buildAssetSystemMessage(
   spendingCategory: string,
   currency: string,
   relatedAssets?: RelatedAssetContext,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
 ): string {
   const currencyInfo = CURRENCY_INFO[currency] || CURRENCY_INFO['USD'];
 
@@ -1105,7 +1183,10 @@ ${getVendorExamples(spendingCategory)}
 
 IMPORTANT: Do NOT use consulting firms (Deloitte, PwC, EY, KPMG, Accenture, McKinsey, BCG) as vendors UNLESS the spending category explicitly involves consulting, advisory, audit, or professional services. For categories like equipment, logistics, utilities, facilities, manufacturing, etc., use vendors that specialize in that specific industry.
 
-The data should have realistic prices and quantities appropriate for the company's size and industry.`;
+The data should have realistic prices and quantities appropriate for the company's size and industry.
+
+${getTaxGuidance(currency, taxConfig)}
+${getDiscountGuidance(discountConfig)}`;
 
   if (relatedAssets?.quote) {
     systemMessage += `
@@ -1140,10 +1221,12 @@ export async function generateAssetContentStreaming(
   currency: string = 'USD',
   lineItemCount?: number,
   reqId?: string,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
 ): Promise<AssetData> {
   const prompt = relatedAssets
-    ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency, lineItemCount)
-    : buildPrompt(type, company, spendingCategory, currency, lineItemCount);
+    ? buildConnectedPrompt(type, company, spendingCategory, relatedAssets, invoiceConfig, currency, lineItemCount, taxConfig, discountConfig)
+    : buildPrompt(type, company, spendingCategory, currency, lineItemCount, taxConfig, discountConfig);
 
   const triggers = STATUS_TRIGGERS[type];
   const triggeredFields = new Set<string>();
@@ -1151,7 +1234,7 @@ export async function generateAssetContentStreaming(
   const isConnected = relatedAssets && (relatedAssets.quote || relatedAssets.contract);
   onStatus(isConnected ? 'Linking to related documents...' : 'Initializing generation...');
 
-  const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency, relatedAssets);
+  const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency, relatedAssets, taxConfig, discountConfig);
 
   const tag = reqId ? `[generate ${reqId}]` : undefined;
   const startedAt = Date.now();
@@ -1178,7 +1261,7 @@ export async function generateAssetContentStreaming(
   try {
     const parsed = extractJSON<AssetData>(text);
     if (tag) console.log(`${tag} json_parsed elapsed_ms=${elapsed()} text_len=${text.length}`);
-    return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed)));
+    return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed, taxConfig, discountConfig)));
   } catch (err) {
     if (tag) console.error(`${tag} json_parse_failed elapsed_ms=${elapsed()} text_len=${text.length}`);
     throw err;
@@ -1191,9 +1274,11 @@ export async function generateAssetContent(
   spendingCategory: string,
   currency: string = 'USD',
   lineItemCount?: number,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
 ): Promise<AssetData> {
-  const prompt = buildPrompt(type, company, spendingCategory, currency, lineItemCount);
-  const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency);
+  const prompt = buildPrompt(type, company, spendingCategory, currency, lineItemCount, taxConfig, discountConfig);
+  const systemMessage = buildAssetSystemMessage(type, company, spendingCategory, currency, undefined, taxConfig, discountConfig);
 
   const { text } = await callClaude({
     system: systemMessage,
@@ -1202,7 +1287,7 @@ export async function generateAssetContent(
   });
 
   const parsed = extractJSON<AssetData>(text);
-  return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed)));
+  return stampAssetLogos(type, ensureLineItemIds(type, recalculateTotals(type, parsed, taxConfig, discountConfig)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1456,7 +1541,7 @@ JSON Structure for paper_receipt:
   "footer": ["array of 1-3 appropriate footer messages for this receipt type"]
 }
 
-${getTaxGuidance(currency)}
+${getLegacyTaxGuidance(currency)}
 Apply the correct tax name(s) and rate(s) for the ${currency} region. Consider category-specific rates (e.g., food may be taxed differently).
 
 Return ONLY valid JSON, no markdown or explanation.`;
@@ -1507,7 +1592,7 @@ JSON Structure for receipt:
   "cardLast4": "string (if mentioned, otherwise generate 4 digits)"
 }
 
-${getTaxGuidance(currency)}
+${getLegacyTaxGuidance(currency)}
 Apply the correct tax name(s) and rate(s) for the ${currency} region.
 
 Return ONLY valid JSON, no markdown or explanation.`;
@@ -1769,6 +1854,8 @@ function buildPrompt(
   spendingCategory: string,
   currency: string = 'USD',
   lineItemCount?: number,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
 ): string {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -1815,7 +1902,8 @@ VENDOR REQUIREMENTS:
 - All generated content MUST be related to ${spendingCategory}
 - IMPORTANT: Include the vendor's actual website domain (e.g., "dell.com", "staples.com") for logo display
 
-${getTaxGuidance(currency)}
+${getTaxGuidance(currency, taxConfig)}
+${getDiscountGuidance(discountConfig)}
 `;
 
   switch (type) {
@@ -1880,11 +1968,10 @@ JSON Structure:
   "notes": "string (optional thank you note)"
 }
 
-${B2B_TAX_RULES}
+${taxConfig?.apply ? B2B_TAX_RULES : 'Tax is disabled for this generation — leave taxes empty and taxTotal at 0.'}
 The CLIENT is located at: ${company.location}
-The VENDOR's location will be determined by you based on the vendor you select. Evaluate whether this is a domestic or cross-border transaction and apply the correct B2B tax treatment from the rules above. If cross-border, apply export exemptions or reverse charge as appropriate and include explanatory notes.
+The VENDOR's location will be determined by you based on the vendor you select. ${taxConfig?.apply ? 'Follow the TAX RULES section above using the user-configured tax name and rate only (do not invent additional rates).' : 'Do not invent tax lines.'}
 
-Apply the tax rules above for ${currency}. Use the correct tax name(s), rate(s), and number of tax lines for the region. If multiple tax components apply (e.g. GST + PST in Canada, or CGST + SGST in India), include each as a separate entry in the taxes array. Consider category-specific rates where applicable.
 Generate exactly ${lineItemCount || 4} line items with realistic pricing for a ${company.employeeCount} employee company purchasing ${spendingCategory} related items/services.`;
 
     case 'receipt':
@@ -1931,7 +2018,7 @@ JSON Structure:
   "cardLast4": "string (4 digits)"
 }
 
-Apply the tax rules above for ${currency}. Use the correct tax name(s) and rate(s) for the region. Consider category-specific rates for the items being purchased.
+Follow the TAX RULES section above — do not invent tax beyond what that section allows.
 Generate 2-4 items. Keep the total reasonable for a single ${spendingCategory} purchase (typically under $500).`;
 
     case 'paper_receipt':
@@ -2011,7 +2098,7 @@ JSON Structure:
   "footer": ["string array of 1-3 typical receipt footer messages like 'Thank you!', 'Survey: www.survey.com', 'Return Policy: 30 days']"
 }
 
-Apply the tax rules above for ${currency}. Use the correct tax name(s) and rate(s) for the region. Consider category-specific rates for the items being purchased (e.g., food may be taxed differently than other goods).
+Follow the TAX RULES section above — do not invent tax beyond what that section allows. Do not invent item discounts unless DISCOUNT RULES say otherwise.
 Generate 3-6 items. Keep the total under $200 for a typical expense purchase.`;
 
     case 'quote':
@@ -2058,12 +2145,13 @@ JSON Structure:
     { "id": "string (unique UUID v4)", "description": "string (DETAILED service with scope, deliverables, or timeframe)", "quantity": number (hours or units), "unitPrice": number, "total": number }
   ],
   "subtotal": number,
-  "discount": number (optional volume discount, can be 0),
+  "discount": number (follow DISCOUNT RULES — 0 when discount is disabled),
   "total": number,
   "terms": "string (payment terms and conditions)",
   "notes": "string (scope notes or next steps)"
 }
 
+Follow the DISCOUNT RULES section above — do not invent a volume discount when discount is disabled.
 Generate exactly ${lineItemCount || 4} line items representing a ${spendingCategory} project or service engagement. Price appropriately for a ${company.employeeCount} employee ${company.industry} company.`;
 
     case 'contract':
@@ -2328,6 +2416,8 @@ function buildConnectedPrompt(
   invoiceConfig?: InvoiceConfig,
   currency: string = 'USD',
   lineItemCount?: number,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
 ): string {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -2600,14 +2690,15 @@ JSON Structure:
   "notes": "string (${invoiceConfig ? `mention this is invoice ${invoiceConfig.invoiceNumber} of ${invoiceConfig.totalInvoices} and reference the quote/contract` : 'reference the quote/contract in the note'})"
 }
 
-${getTaxGuidance(currency)}
+${getTaxGuidance(currency, taxConfig)}
+${getDiscountGuidance(discountConfig)}
 
-${B2B_TAX_RULES}
+${taxConfig?.apply ? B2B_TAX_RULES : 'Do not invent cross-border tax treatments — tax is disabled for this generation.'}
 The CLIENT is located at: ${company.location}
-The VENDOR is: ${vendorInfo?.name} located at ${vendorInfo?.address}. Evaluate whether this is a domestic or cross-border transaction and apply the correct B2B tax treatment.
+The VENDOR is: ${vendorInfo?.name} located at ${vendorInfo?.address}. ${taxConfig?.apply ? 'Evaluate whether this is a domestic or cross-border transaction, but still use the user-configured tax name and rate above.' : 'Leave taxes empty.'}
 
 Generate exactly ${lineItemCount || 3} line items that represent billable work from the quoted/contracted services.`;
   }
 
-  return buildPrompt(type, company, spendingCategory, currency);
+  return buildPrompt(type, company, spendingCategory, currency, lineItemCount, taxConfig, discountConfig);
 }

@@ -54,6 +54,18 @@ interface AppState {
   lineItemCount: number;
   setLineItemCount: (count: number) => void;
 
+  // Pre-generation tax / discount (default off — user opts in on AssetSelector)
+  applyTax: boolean;
+  setApplyTax: (apply: boolean) => void;
+  taxRatePercent: number;
+  setTaxRatePercent: (percent: number) => void;
+  taxName: string;
+  setTaxName: (name: string) => void;
+  applyDiscount: boolean;
+  setApplyDiscount: (apply: boolean) => void;
+  discountPercent: number;
+  setDiscountPercent: (percent: number) => void;
+
   // Generated assets (single assets)
   generatedAssets: Record<AssetType, AssetData | null>;
   setGeneratedAsset: (type: AssetType, data: AssetData) => void;
@@ -104,6 +116,11 @@ const initialState = {
   invoiceCount: 2,
   matchingMode: '2way' as '2way' | '3way',
   lineItemCount: 4,
+  applyTax: false,
+  taxRatePercent: 8.875,
+  taxName: 'Sales Tax',
+  applyDiscount: false,
+  discountPercent: 10,
   generatedAssets: {
     invoice: null,
     receipt: null,
@@ -159,6 +176,12 @@ export const useStore = create<AppState>((set) => ({
   setMatchingMode: (mode) => set({ matchingMode: mode }),
 
   setLineItemCount: (count) => set({ lineItemCount: count }),
+
+  setApplyTax: (applyTax) => set({ applyTax }),
+  setTaxRatePercent: (taxRatePercent) => set({ taxRatePercent }),
+  setTaxName: (taxName) => set({ taxName }),
+  setApplyDiscount: (applyDiscount) => set({ applyDiscount }),
+  setDiscountPercent: (discountPercent) => set({ discountPercent }),
 
   setGeneratedAsset: (type, data) =>
     set((state) => ({

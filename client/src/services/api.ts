@@ -177,6 +177,17 @@ export async function generateAsset(
   }
 }
 
+export interface TaxConfigPayload {
+  apply: boolean;
+  rate: number;
+  name: string;
+}
+
+export interface DiscountConfigPayload {
+  apply: boolean;
+  percent: number;
+}
+
 // Asset generation with streaming status updates
 export async function generateAssetStreaming(
   type: AssetType,
@@ -185,14 +196,25 @@ export async function generateAssetStreaming(
   onStatus: (status: string) => void,
   relatedAssets?: RelatedAssetContext,
   currency: string = 'USD',
-  lineItemCount?: number
+  lineItemCount?: number,
+  taxConfig?: TaxConfigPayload,
+  discountConfig?: DiscountConfigPayload,
 ): Promise<AssetData> {
   const response = await fetch('/api/generate/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ type, company, spendingCategory, relatedAssets, currency, lineItemCount }),
+    body: JSON.stringify({
+      type,
+      company,
+      spendingCategory,
+      relatedAssets,
+      currency,
+      lineItemCount,
+      taxConfig,
+      discountConfig,
+    }),
   });
 
   if (!response.ok) {
@@ -474,7 +496,9 @@ export async function generateConnectedAssetsStreaming(
   invoiceCount: number = 2,
   currency: string = 'USD',
   lineItemCount?: number,
-  matchingMode: '2way' | '3way' = '2way'
+  matchingMode: '2way' | '3way' = '2way',
+  taxConfig?: TaxConfigPayload,
+  discountConfig?: DiscountConfigPayload,
 ): Promise<ConnectedGenerationResult> {
   const results: Partial<Record<AssetType, AssetData>> = {};
   const invoices: InvoiceData[] = [];
@@ -540,6 +564,8 @@ export async function generateConnectedAssetsStreaming(
               relatedAssets: invoiceRelatedAssets,
               currency,
               lineItemCount,
+              taxConfig,
+              discountConfig,
               invoiceConfig: {
                 invoiceNumber,
                 totalInvoices: invoiceCount,
@@ -624,7 +650,9 @@ export async function generateConnectedAssetsStreaming(
       (status) => onStatus(type, status),
       relatedAssets,
       currency,
-      lineItemCount
+      lineItemCount,
+      taxConfig,
+      discountConfig,
     );
     
     results[type] = data;

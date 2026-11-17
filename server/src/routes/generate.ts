@@ -6,7 +6,14 @@ import {
   formatErrorResponse,
 } from '../services/claude.js';
 import { generateReceiptImage, AVAILABLE_SCENES } from '../services/gemini.js';
-import { CompanyProfile, AssetType, RelatedAssetContext, InvoiceConfig } from '../types.js';
+import {
+  CompanyProfile,
+  AssetType,
+  RelatedAssetContext,
+  InvoiceConfig,
+  TaxConfig,
+  DiscountConfig,
+} from '../types.js';
 import { trackGeneration } from '../services/analytics.js';
 import { isTestDomain, getMockAsset, getMockStatusMessages } from '../services/mockData.js';
 import { openSSE } from '../utils/sse.js';
@@ -21,12 +28,37 @@ interface GenerateRequest {
   invoiceConfig?: InvoiceConfig;
   currency?: string;
   lineItemCount?: number;
+  taxConfig?: TaxConfig;
+  discountConfig?: DiscountConfig;
+}
+
+function normalizeTaxConfig(raw?: TaxConfig): TaxConfig {
+  if (!raw || !raw.apply) {
+    return { apply: false, rate: 0, name: 'Sales Tax' };
+  }
+  return {
+    apply: true,
+    rate: Math.max(0, Number(raw.rate) || 0),
+    name: (raw.name || 'Sales Tax').trim() || 'Sales Tax',
+  };
+}
+
+function normalizeDiscountConfig(raw?: DiscountConfig): DiscountConfig {
+  if (!raw || !raw.apply) {
+    return { apply: false, percent: 0 };
+  }
+  return {
+    apply: true,
+    percent: Math.max(0, Number(raw.percent) || 0),
+  };
 }
 
 // Standard non-streaming endpoint
 generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
     const { type, company, spendingCategory, currency = 'USD', lineItemCount } = req.body;
+    const taxConfig = normalizeTaxConfig(req.body.taxConfig);
+    const discountConfig = normalizeDiscountConfig(req.body.discountConfig);
     
     if (!type) {
       return res.status(400).json({
@@ -59,12 +91,20 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
 
     if (isTestDomain(company.domain || '')) {
       console.log(`🧪 Test mode — returning mock ${type}`);
-      const mockData = getMockAsset(type);
+      const mockData = getMockAsset(type, undefined, undefined, taxConfig, discountConfig);
       trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: 'standard', userEmail: req.userEmail });
       return res.json({ success: true, data: mockData });
     }
     
-    const assetData = await generateAssetContent(type, company, spendingCategory, currency, lineItemCount);
+    const assetData = await generateAssetContent(
+      type,
+      company,
+      spendingCategory,
+      currency,
+      lineItemCount,
+      taxConfig,
+      discountConfig,
+    );
     
     trackGeneration({
       assetType: type,
@@ -96,6 +136,8 @@ generateRouter.post('/', async (req: Request<{}, {}, GenerateRequest>, res: Resp
 generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res: Response) => {
   try {
     const { type, company, spendingCategory, relatedAssets, invoiceConfig, currency = 'USD', lineItemCount } = req.body;
+    const taxConfig = normalizeTaxConfig(req.body.taxConfig);
+    const discountConfig = normalizeDiscountConfig(req.body.discountConfig);
     
     // Validate inputs
     if (!type) {
@@ -134,7 +176,7 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
     const tag = `[generate ${stream.id}]`;
 
     console.log(
-      `${tag} start type=${type} domain=${company.domain ?? 'unknown'} flow=${relatedAssets ? 'connected' : 'standard'} client_ip=${req.ip ?? 'unknown'} ua=${JSON.stringify(req.get('user-agent') ?? '')}`,
+      `${tag} start type=${type} domain=${company.domain ?? 'unknown'} flow=${relatedAssets ? 'connected' : 'standard'} tax=${taxConfig.apply ? taxConfig.rate : 'off'} discount=${discountConfig.apply ? discountConfig.percent : 'off'} client_ip=${req.ip ?? 'unknown'} ua=${JSON.stringify(req.get('user-agent') ?? '')}`,
     );
     console.log(`${tag} sse_opened elapsed_ms=${elapsed()}`);
 
@@ -157,7 +199,7 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
         stream.send('status', { status });
         await new Promise(r => setTimeout(r, 400));
       }
-      const mockData = getMockAsset(type, invoiceConfig, relatedAssets);
+      const mockData = getMockAsset(type, invoiceConfig, relatedAssets, taxConfig, discountConfig);
       stream.send('complete', { success: true, data: mockData });
       console.log(`${tag} complete_sent elapsed_ms=${elapsed()} mock=true`);
       trackGeneration({ assetType: type, spendingCategory, companyName: company.name, companyDomain: company.domain, currency, flowType: relatedAssets ? 'connected' : 'standard', userEmail: req.userEmail });
@@ -179,6 +221,8 @@ generateRouter.post('/stream', async (req: Request<{}, {}, GenerateRequest>, res
         currency,
         lineItemCount,
         stream.id,
+        taxConfig,
+        discountConfig,
       );
 
       stream.send('complete', { success: true, data: assetData });

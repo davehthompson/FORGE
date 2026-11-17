@@ -74,9 +74,29 @@ export function AssetSelector() {
     setMatchingMode,
     lineItemCount,
     setLineItemCount,
+    applyTax,
+    setApplyTax,
+    taxRatePercent,
+    setTaxRatePercent,
+    taxName,
+    setTaxName,
+    applyDiscount,
+    setApplyDiscount,
+    discountPercent,
+    setDiscountPercent,
     setGeneratedInvoices,
     setCurrentInvoiceIndex,
   } = useStore();
+
+  const taxConfig = {
+    apply: applyTax,
+    rate: Math.max(0, taxRatePercent) / 100,
+    name: taxName.trim() || 'Sales Tax',
+  };
+  const discountConfig = {
+    apply: applyDiscount,
+    percent: Math.max(0, discountPercent),
+  };
   
   const [currentAssetType, setCurrentAssetType] = useState<AssetType | null>(null);
   const [currentStatus, setCurrentStatus] = useState<string | null>(null);
@@ -131,7 +151,9 @@ export function AssetSelector() {
           invoiceCount,
           selectedCurrency,
           lineItemCount,
-          matchingMode
+          matchingMode,
+          taxConfig,
+          discountConfig,
         );
         
         // Store single assets (quote, contract, receipt)
@@ -171,7 +193,9 @@ export function AssetSelector() {
           1,
           selectedCurrency,
           lineItemCount,
-          matchingMode
+          matchingMode,
+          taxConfig,
+          discountConfig,
         );
         
         Object.entries(result.assets).forEach(([type, data]) => {
@@ -194,7 +218,9 @@ export function AssetSelector() {
             },
             undefined,
             selectedCurrency,
-            lineItemCount
+            lineItemCount,
+            taxConfig,
+            discountConfig,
           );
           
           setGeneratedAsset(type, assetData);
@@ -409,6 +435,86 @@ export function AssetSelector() {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Sales Tax */}
+          {selectedAssets.some(a => ['invoice', 'quote', 'receipt', 'paper_receipt'].includes(a)) && (
+            <div className="mb-6 p-4 bg-ramp-sand/50 rounded-lg border border-ramp-stone space-y-3">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={applyTax}
+                  onChange={(e) => setApplyTax(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-ramp-stone text-ramp-slate focus:ring-ramp-slate"
+                />
+                <div>
+                  <p className="text-sm font-medium text-ramp-slate">Apply sales tax</p>
+                  <p className="text-xs text-ramp-sage">
+                    Off by default. When enabled, documents use your tax name and rate — the AI will not invent tax.
+                  </p>
+                </div>
+              </label>
+              {applyTax && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-7">
+                  <div>
+                    <label className="block text-xs font-medium text-ramp-sage mb-1">Tax name</label>
+                    <input
+                      type="text"
+                      value={taxName}
+                      onChange={(e) => setTaxName(e.target.value)}
+                      className="w-full rounded-lg border border-ramp-stone px-3 py-2 text-sm text-ramp-slate focus:outline-none focus:ring-2 focus:ring-ramp-slate/20"
+                      placeholder="Sales Tax"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-ramp-sage mb-1">Rate (%)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.001}
+                      value={taxRatePercent}
+                      onChange={(e) => setTaxRatePercent(parseFloat(e.target.value) || 0)}
+                      className="w-full rounded-lg border border-ramp-stone px-3 py-2 text-sm text-ramp-slate focus:outline-none focus:ring-2 focus:ring-ramp-slate/20"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Discount (quotes) */}
+          {selectedAssets.includes('quote') && (
+            <div className="mb-6 p-4 bg-ramp-sand/50 rounded-lg border border-ramp-stone space-y-3">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={applyDiscount}
+                  onChange={(e) => setApplyDiscount(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-ramp-stone text-ramp-slate focus:ring-ramp-slate"
+                />
+                <div>
+                  <p className="text-sm font-medium text-ramp-slate">Apply quote discount</p>
+                  <p className="text-xs text-ramp-sage">
+                    Off by default. When enabled, quotes use your discount percent of subtotal.
+                  </p>
+                </div>
+              </label>
+              {applyDiscount && (
+                <div className="pl-7 max-w-[12rem]">
+                  <label className="block text-xs font-medium text-ramp-sage mb-1">Discount (%)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    value={discountPercent}
+                    onChange={(e) => setDiscountPercent(parseFloat(e.target.value) || 0)}
+                    className="w-full rounded-lg border border-ramp-stone px-3 py-2 text-sm text-ramp-slate focus:outline-none focus:ring-2 focus:ring-ramp-slate/20"
+                  />
+                </div>
+              )}
             </div>
           )}
 

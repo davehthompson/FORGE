@@ -322,6 +322,22 @@ export interface RelatedAssetContext {
   contract?: ContractData;
 }
 
+/** User-chosen sales tax for generation. Default is apply=false (no tax). */
+export interface TaxConfig {
+  apply: boolean;
+  /** Decimal rate, e.g. 0.0875 for 8.75%. Ignored when apply is false. */
+  rate: number;
+  /** Display name, e.g. "Sales Tax". Ignored when apply is false. */
+  name: string;
+}
+
+/** User-chosen quote discount for generation. Default is apply=false (no discount). */
+export interface DiscountConfig {
+  apply: boolean;
+  /** Percent of subtotal, e.g. 10 for 10%. Ignored when apply is false. */
+  percent: number;
+}
+
 // Configuration for partial invoice generation
 export interface InvoiceConfig {
   invoiceNumber: number;      // Which invoice this is (1, 2, 3...)

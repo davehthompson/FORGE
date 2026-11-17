@@ -1,6 +1,87 @@
 import crypto from 'crypto';
-import { CompanyProfile, AssetType, InvoiceData, QuoteData, ContractData, AssetData, InvoiceConfig, RelatedAssetContext } from '../types.js';
+import {
+  CompanyProfile,
+  AssetType,
+  InvoiceData,
+  QuoteData,
+  ContractData,
+  AssetData,
+  InvoiceConfig,
+  RelatedAssetContext,
+  TaxConfig,
+  DiscountConfig,
+  ReceiptData,
+  PaperReceiptData,
+} from '../types.js';
 import { stampAssetLogos } from './claude.js';
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Stamp user tax/discount config onto mock assets (mirrors server recalculateTotals). */
+function applyTaxDiscountConfig(
+  type: AssetType,
+  data: AssetData,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
+): AssetData {
+  const applyTax = Boolean(taxConfig?.apply);
+  const taxRate = applyTax ? Math.max(0, taxConfig!.rate) : 0;
+  const taxName = applyTax ? (taxConfig!.name || 'Sales Tax') : 'Tax';
+
+  if (type === 'invoice') {
+    const d = data as InvoiceData;
+    if (applyTax) {
+      d.taxes = [{ name: taxName, rate: taxRate, amount: round2(d.subtotal * taxRate) }];
+      d.taxTotal = d.taxes[0].amount;
+    } else {
+      d.taxes = [];
+      d.taxTotal = 0;
+    }
+    d.tax = d.taxTotal;
+    d.total = round2(d.subtotal + d.taxTotal);
+    return d;
+  }
+  if (type === 'receipt') {
+    const d = data as ReceiptData;
+    if (applyTax) {
+      d.taxes = [{ name: taxName, rate: taxRate, amount: round2(d.subtotal * taxRate) }];
+      d.taxTotal = d.taxes[0].amount;
+    } else {
+      d.taxes = [];
+      d.taxTotal = 0;
+    }
+    d.tax = d.taxTotal;
+    d.total = round2(d.subtotal + d.taxTotal + (d.tip || 0));
+    return d;
+  }
+  if (type === 'paper_receipt') {
+    const d = data as PaperReceiptData;
+    if (applyTax) {
+      d.taxes = [{ name: taxName, rate: taxRate, amount: round2(d.subtotal * taxRate) }];
+      d.taxTotal = d.taxes[0].amount;
+    } else {
+      d.taxes = [];
+      d.taxTotal = 0;
+    }
+    d.taxAmount = d.taxTotal;
+    d.taxRate = applyTax ? taxRate : 0;
+    d.total = round2(d.subtotal + d.taxTotal + (d.tip || 0));
+    return d;
+  }
+  if (type === 'quote') {
+    const d = data as QuoteData;
+    if (discountConfig?.apply) {
+      d.discount = round2(d.subtotal * (Math.max(0, discountConfig.percent) / 100));
+    } else {
+      d.discount = 0;
+    }
+    d.total = round2(d.subtotal - (d.discount || 0));
+    return d;
+  }
+  return data;
+}
 
 export const TEST_DOMAIN = 'ramptest.com';
 
@@ -385,6 +466,8 @@ export function getMockAsset(
   type: AssetType,
   config?: InvoiceConfig,
   relatedAssets?: RelatedAssetContext,
+  taxConfig?: TaxConfig,
+  discountConfig?: DiscountConfig,
 ): AssetData {
   let asset: AssetData;
   switch (type) {
@@ -412,6 +495,7 @@ export function getMockAsset(
     default:
       asset = getMockInvoice();
   }
+  asset = applyTaxDiscountConfig(type, asset, taxConfig, discountConfig);
   // Stamp Logo.dev URLs onto vendor/store/airline/hotel/provider so test-mode
   // (ramptest.com path) renders end-to-end identically to real generations.
   return stampAssetLogos(type, asset);
