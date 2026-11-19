@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import type { CompanyProfile, AssetType, AssetData, InvoiceData, QuoteData, ContractData } from '../types';
 
-type AppMode = 'company' | 'quick_receipt';
-type AppStep = 'home' | 'input' | 'summary' | 'category' | 'select' | 'quick_receipt' | 'editor' | 'export' | 'receipt_image_preview';
+type AppMode = 'company' | 'quick_receipt' | 'invoice_edit';
+type AppStep = 'home' | 'input' | 'summary' | 'category' | 'select' | 'quick_receipt' | 'invoice_edit' | 'editor' | 'export' | 'receipt_image_preview';
 
 interface AppState {
   // Mode & Navigation

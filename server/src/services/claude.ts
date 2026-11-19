@@ -294,7 +294,7 @@ function extractTextFromContent(blocks: Anthropic.ContentBlock[]): string {
     .join('');
 }
 
-function extractJSON<T = unknown>(
+export function extractJSON<T = unknown>(
   text: string,
   pattern: RegExp = /\{[\s\S]*\}/,
 ): T {
@@ -364,6 +364,37 @@ async function callClaude(opts: CallOpts): Promise<{
   }
 
   return { text: extractTextFromContent(response.content), raw: response };
+}
+
+/**
+ * One-shot Router messages call that can include image blocks. Used by the
+ * prospect-invoice extractor. Same auth and /v1 rewrite as getClient().
+ */
+export async function completeRouterMessage(opts: {
+  system: string;
+  content: Anthropic.Messages.MessageParam['content'];
+  maxTokens: number;
+  timeoutMs?: number;
+}): Promise<string> {
+  const client = getClient();
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create(
+      {
+        model: getModel(),
+        max_tokens: opts.maxTokens,
+        system: opts.system,
+        messages: [{ role: 'user', content: opts.content }],
+      },
+      { timeout: opts.timeoutMs ?? TIMEOUT_MS },
+    );
+  } catch (err) {
+    throw mapClaudeError(err);
+  }
+  if (response.stop_reason === 'max_tokens') {
+    throw new ClaudeError('TRUNCATED', 'Response was truncated due to max_tokens limit');
+  }
+  return extractTextFromContent(response.content);
 }
 
 interface StreamCallOpts extends CallOpts {

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { enrichRouter } from './routes/enrich.js';
 import { generateRouter } from './routes/generate.js';
+import { invoiceEditRouter } from './routes/invoiceEdit.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { v1Router } from './routes/v1.js';
 import { apiKeyAuth } from './middleware/apiKey.js';
@@ -32,7 +33,8 @@ const PORT = process.env.PORT || 3001;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+// Invoice-edit uploads send compressed page images alongside the text layer.
+app.use(express.json({ limit: '25mb' }));
 // Decode the Cloudflare Access JWT once per request and stamp req.userEmail.
 // Mounted globally so every downstream route — /api/enrich, /api/generate,
 // /api/analytics, /api/v1 — can attribute its work to the logged-in user.
@@ -45,6 +47,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/enrich', enrichRouter);
 app.use('/api/generate', generateRouter);
+app.use('/api/invoice-edit', invoiceEditRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/v1', apiKeyAuth, v1Router);
 

@@ -7,6 +7,7 @@ import { CompanySummary } from './components/CompanySummary';
 import { CategorySelector } from './components/CategorySelector';
 import { AssetSelector } from './components/AssetSelector';
 import { QuickReceiptPrompt } from './components/QuickReceipt';
+import { InvoiceEdit } from './components/InvoiceEdit/InvoiceEdit';
 import { ReceiptImagePreview } from './components/QuickReceipt/ReceiptImagePreview';
 import { Editor } from './components/Editor';
 import { Export } from './components/Export';
@@ -49,6 +50,8 @@ function App() {
         return <AssetSelector />;
       case 'quick_receipt':
         return <QuickReceiptPrompt />;
+      case 'invoice_edit':
+        return <InvoiceEdit />;
       case 'receipt_image_preview':
         return <ReceiptImagePreview />;
       case 'editor':
