@@ -1,10 +1,11 @@
-import { useRef, useState, type PointerEvent, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { ArrowLeft, Download, FileScan, PenLine, Sparkles } from 'lucide-react';
 import { Button, Card, CardContent } from '../ui';
 import { useStore } from '../../hooks/useStore';
-import { readInvoiceFile, type LoadedInvoice } from '../../services/invoiceFile';
+import { readInvoiceFile, type LoadedInvoice, type LoadedPage } from '../../services/invoiceFile';
 import { extractInvoiceFields, type EditField } from '../../services/invoiceEditApi';
 import { downloadBlob, exportEditedInvoice } from '../../services/invoiceEditExport';
+import { applyFieldStyles, cssFontFamily, FALLBACK_STYLE, isRightAligned, styleForField } from '../../services/invoiceStyle';
 
 const GROUPS: Array<{ id: EditField['group']; title: string }> = [
   { id: 'header', title: 'Header' },
@@ -27,6 +28,7 @@ export function InvoiceEdit() {
   const [draft, setDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [exporting, setExporting] = useState(false);
   const drag = useRef<{ x: number; y: number } | null>(null);
+  const [layoutTick, setLayoutTick] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const current = invoice?.pages[page];
@@ -42,7 +44,8 @@ export function InvoiceEdit() {
       setPage(0);
       setStatus('Reading the invoice...');
       const extracted = await extractInvoiceFields(loaded.pages, setStatus);
-      setFields(extracted);
+      const styled = await applyFieldStyles(loaded.pages, extracted);
+      setFields(styled);
       setSelectedId(extracted[0]?.id ?? null);
       setStatus(null);
       if (!extracted.length) {
@@ -151,7 +154,7 @@ export function InvoiceEdit() {
     setDraft({ x, y, w: Math.abs(point.x - drag.current.x), h: Math.abs(point.y - drag.current.y) });
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = async () => {
     if (!drag.current || !draft || !current) {
       drag.current = null;
       return;
@@ -161,6 +164,7 @@ export function InvoiceEdit() {
     setDraft(null);
     if (box.w < 0.01 || box.h < 0.008) return;
     const id = `custom-${Date.now()}`;
+    const style = await styleForField(current, box);
     const field: EditField = {
       id,
       group: 'custom',
@@ -168,6 +172,7 @@ export function InvoiceEdit() {
       original: '',
       value: '',
       page: current.page,
+      style,
       ...box,
     };
     setFields((currentFields) => [...currentFields, field]);
@@ -297,35 +302,26 @@ export function InvoiceEdit() {
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
             >
-              <img src={current.previewUrl} alt={`Invoice page ${page + 1}`} className="block w-full h-auto bg-white" draggable={false} />
-              {pageFields.map((field) => {
-                const dirty = field.value !== field.original;
-                const selected = field.id === selectedId;
-                return (
-                  <button
-                    key={field.id}
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (drawMode) return;
-                      setSelectedId(field.id);
-                    }}
-                    className={`absolute text-left overflow-hidden ${
-                      dirty ? 'bg-white text-ramp-slate' : 'bg-transparent'
-                    } ${selected ? 'ring-2 ring-ramp-slate' : 'ring-1 ring-ramp-solar/70'}`}
-                    style={{
-                      left: `${field.x * 100}%`,
-                      top: `${field.y * 100}%`,
-                      width: `${field.w * 100}%`,
-                      height: `${field.h * 100}%`,
-                      fontSize: dirty ? '10px' : 0,
-                      lineHeight: 1.1,
-                    }}
-                  >
-                    {dirty ? field.value : ''}
-                  </button>
-                );
-              })}
+              <img
+                src={current.previewUrl}
+                alt={`Invoice page ${page + 1}`}
+                className="block w-full h-auto bg-white"
+                draggable={false}
+                onLoad={() => setLayoutTick((tick) => tick + 1)}
+              />
+              {pageFields.map((field) => (
+                <FieldBox
+                  key={field.id}
+                  field={field}
+                  page={current}
+                  layoutTick={layoutTick}
+                  selected={field.id === selectedId}
+                  onSelect={() => {
+                    if (drawMode) return;
+                    setSelectedId(field.id);
+                  }}
+                />
+              ))}
               {draft && (
                 <div
                   className="absolute border-2 border-ramp-slate bg-white/40"
@@ -387,6 +383,70 @@ export function InvoiceEdit() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function FieldBox({
+  field,
+  page,
+  layoutTick,
+  selected,
+  onSelect,
+}: {
+  field: EditField;
+  page: LoadedPage;
+  layoutTick: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const dirty = field.value !== field.original;
+  const style = field.style ?? FALLBACK_STYLE;
+  const right = isRightAligned(field.id);
+  const [px, setPx] = useState(12);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !dirty) return;
+    const boxH = el.clientHeight;
+    if (boxH < 1) return;
+    const boxDraw = Math.max(1, field.h * page.drawHeight);
+    let next = Math.max(6, (style.fontSize / boxDraw) * boxH);
+    el.style.fontSize = `${next}px`;
+    while (next > 6 && el.scrollWidth > el.clientWidth + 1) {
+      next -= 0.5;
+      el.style.fontSize = `${next}px`;
+    }
+    setPx((current) => (Math.abs(current - next) < 0.25 ? current : next));
+  }, [dirty, field.h, field.value, field.w, layoutTick, page.drawHeight, style.bold, style.fontFamily, style.fontSize, style.italic]);
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+      className={`absolute overflow-hidden ${selected ? 'ring-2 ring-ramp-slate' : 'ring-1 ring-ramp-solar/70'}`}
+      style={{
+        left: `${field.x * 100}%`,
+        top: `${field.y * 100}%`,
+        width: `${field.w * 100}%`,
+        height: `${field.h * 100}%`,
+        background: dirty ? style.background : 'transparent',
+        color: style.color,
+        fontFamily: cssFontFamily(style),
+        fontWeight: style.bold ? 700 : 400,
+        fontStyle: style.italic ? 'italic' : 'normal',
+        lineHeight: 1,
+        textAlign: right ? 'right' : 'left',
+        whiteSpace: 'nowrap',
+        fontSize: dirty ? px : 0,
+      }}
+    >
+      {dirty ? field.value : ''}
+    </button>
   );
 }
 

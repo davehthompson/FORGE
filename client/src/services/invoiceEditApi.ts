@@ -1,4 +1,5 @@
 import type { LoadedPage } from './invoiceFile';
+import type { TextStyle } from './invoiceStyle';
 import { createApiError } from './api';
 
 export interface EditField {
@@ -13,6 +14,8 @@ export interface EditField {
   w: number;
   h: number;
   lineIndex?: number;
+  spanIds?: string[];
+  style?: TextStyle;
 }
 
 export async function extractInvoiceFields(
@@ -25,7 +28,7 @@ export async function extractInvoiceFields(
     body: JSON.stringify({
       pages: pages.map((page) => ({
         page: page.page,
-        spans: page.spans,
+        spans: page.spans.map(({ id, text, x, y, w, h }) => ({ id, text, x, y, w, h })),
         imageBase64: page.imageBase64,
         imageMediaType: 'image/jpeg' as const,
       })),

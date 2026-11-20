@@ -32,6 +32,7 @@ export interface ExtractedField {
   w: number;
   h: number;
   lineIndex?: number;
+  spanIds?: string[];
 }
 
 interface Bound {
@@ -201,9 +202,15 @@ function fieldsFromRaw(
   ) => {
     const b = asBound(bound);
     if (!b?.value) return;
-    const spans = (b.spanIds || [])
+    let spans = (b.spanIds || [])
       .map((id) => spanById.get(id))
       .filter((s): s is InvoiceSpan & { page: number } => Boolean(s));
+    if (!spans.length) {
+      const hit = [...spanById.values()].find(
+        (s) => s.text.trim() === b.value || s.text.includes(b.value!),
+      );
+      if (hit) spans = [hit];
+    }
     let box = unionBox(spans);
     if (!box && b.box && Number.isFinite(b.box.x)) {
       box = {
@@ -213,12 +220,6 @@ function fieldsFromRaw(
         w: clamp01(b.box.w),
         h: clamp01(b.box.h),
       };
-    }
-    if (!box) {
-      const hit = [...spanById.values()].find(
-        (s) => s.text.trim() === b.value || s.text.includes(b.value!),
-      );
-      if (hit) box = unionBox([hit]);
     }
     if (!box || box.w < 0.002 || box.h < 0.002) return;
     fields.push({
@@ -232,6 +233,7 @@ function fieldsFromRaw(
       y: box.y,
       w: box.w,
       h: box.h,
+      spanIds: spans.map((span) => span.id),
       ...(lineIndex === undefined ? {} : { lineIndex }),
     });
   };

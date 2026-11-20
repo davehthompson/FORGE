@@ -1,6 +1,14 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import type { EditField } from './invoiceEditApi';
 import type { LoadedInvoice } from './invoiceFile';
+import {
+  cssFontFamily,
+  FALLBACK_STYLE,
+  hexToRgb,
+  isRightAligned,
+  standardFontName,
+  type TextStyle,
+} from './invoiceStyle';
 
 function changed(fields: EditField[]): EditField[] {
   return fields.filter((field) => field.value !== field.original || field.group === 'custom');
@@ -10,41 +18,57 @@ function winAnsi(value: string): string {
   return value.replace(/[^\u0020-\u00FF]/g, '?');
 }
 
-function fitSize(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, boxWidth: number, boxHeight: number): number {
-  let size = Math.max(6, Math.min(16, boxHeight * 0.72));
+function fieldStyle(field: EditField): TextStyle {
+  return field.style ?? FALLBACK_STYLE;
+}
+
+function fitSize(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, boxWidth: number, preferred: number): number {
+  let size = Math.max(4, preferred);
   const maxWidth = Math.max(4, boxWidth - 2);
-  while (size > 5 && font.widthOfTextAtSize(text, size) > maxWidth) size -= 0.4;
+  while (size > 4 && font.widthOfTextAtSize(text, size) > maxWidth) size -= 0.25;
   return size;
 }
 
 async function overlayPdf(pdfBytes: ArrayBuffer, fields: EditField[]): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(pdfBytes);
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fonts = new Map<string, PDFFont>();
   for (const field of changed(fields)) {
     const page = pdf.getPage(field.page);
     if (!page) continue;
+    const style = fieldStyle(field);
+    const fontKey = standardFontName(style);
+    let font = fonts.get(fontKey);
+    if (!font) {
+      font = await pdf.embedFont(fontKey);
+      fonts.set(fontKey, font);
+    }
     const pageWidth = page.getWidth();
     const pageHeight = page.getHeight();
     const width = field.w * pageWidth;
     const height = field.h * pageHeight;
     const x = field.x * pageWidth;
     const y = pageHeight - (field.y + field.h) * pageHeight;
+    const paper = hexToRgb(style.background);
+    const ink = hexToRgb(style.color);
     page.drawRectangle({
       x: x - 1,
       y: y - 1,
       width: width + 2,
       height: height + 2,
-      color: rgb(1, 1, 1),
+      color: rgb(paper.r, paper.g, paper.b),
     });
     const text = winAnsi(field.value);
     if (!text) continue;
-    const size = fitSize(text, font, width, height);
+    const preferred = style.fontSize > 0 ? style.fontSize : height * 0.72;
+    const size = fitSize(text, font, width, preferred);
+    const textWidth = font.widthOfTextAtSize(text, size);
+    const textX = isRightAligned(field.id) ? Math.max(x, x + width - textWidth - 1) : x + 1;
     page.drawText(text, {
-      x: x + 1,
+      x: textX,
       y: y + Math.max(0, (height - size) / 2),
       size,
       font,
-      color: rgb(0.05, 0.05, 0.05),
+      color: rgb(ink.r, ink.g, ink.b),
     });
   }
   pdf.setTitle('FORGE edited invoice for OCR testing');
@@ -69,13 +93,22 @@ async function rasterPdf(invoice: LoadedInvoice, fields: EditField[]): Promise<U
       const y = field.y * page.height;
       const w = field.w * page.width;
       const h = field.h * page.height;
-      ctx.fillStyle = '#ffffff';
+      const style = fieldStyle(field);
+      ctx.fillStyle = style.background;
       ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
-      const size = Math.max(8, Math.min(22, h * 0.72));
-      ctx.fillStyle = '#111111';
-      ctx.font = `${size}px Helvetica, Arial, sans-serif`;
+      let size = style.fontSize > 0 ? style.fontSize : h * 0.72;
+      const family = cssFontFamily(style);
+      const fontOf = (px: number) => `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${px}px ${family}`;
+      ctx.font = fontOf(size);
+      while (size > 6 && ctx.measureText(field.value).width > Math.max(4, w - 4)) {
+        size -= 0.5;
+        ctx.font = fontOf(size);
+      }
+      ctx.fillStyle = style.color;
       ctx.textBaseline = 'middle';
-      ctx.fillText(field.value, x + 2, y + h / 2, Math.max(4, w - 4));
+      const right = isRightAligned(field.id);
+      ctx.textAlign = right ? 'right' : 'left';
+      ctx.fillText(field.value, right ? x + w - 2 : x + 2, y + h / 2);
     }
     const png = canvas.toDataURL('image/png');
     const bytes = dataUrlToBytes(png);

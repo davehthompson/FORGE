@@ -1,5 +1,6 @@
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from 'pdfjs-dist';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { flagsFromFamily, sampleCanvas, type TextStyle } from './invoiceStyle';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -10,6 +11,7 @@ export interface TextSpan {
   y: number;
   w: number;
   h: number;
+  style: TextStyle;
 }
 
 export interface LoadedPage {
@@ -18,6 +20,8 @@ export interface LoadedPage {
   /** Pixel size of previewUrl. */
   width: number;
   height: number;
+  /** PDF page height in points, or preview height in pixels for a scan. */
+  drawHeight: number;
   spans: TextSpan[];
   /** JPEG base64 (no data-url prefix) sent only when the text layer is thin. */
   imageBase64?: string;
@@ -54,13 +58,14 @@ async function pageFromPdf(pdf: PDFDocumentProxy, pageNumber: number): Promise<L
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Could not read the invoice page');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   await page.render({ canvas, canvasContext: ctx, viewport }).promise;
 
   const text = await page.getTextContent();
+  const sample = sampleCanvas(ctx);
   const spans: TextSpan[] = [];
   let spanIndex = 0;
   for (const item of text.items) {
@@ -80,6 +85,9 @@ async function pageFromPdf(pdf: PDFDocumentProxy, pageNumber: number): Promise<L
     const w = (x2 - x1) / viewport.width;
     const h = (y2 - y1) / viewport.height;
     if (w < 0.002 || h < 0.003) continue;
+    const fontFamily = text.styles?.[item.fontName]?.fontFamily || 'Helvetica';
+    const flags = flagsFromFamily(fontFamily);
+    const ink = sample(x1, y1, x2 - x1, y2 - y1);
     spans.push({
       id: `p${pageNumber - 1}-s${spanIndex++}`,
       text: item.str,
@@ -87,6 +95,14 @@ async function pageFromPdf(pdf: PDFDocumentProxy, pageNumber: number): Promise<L
       y: y1 / viewport.height,
       w,
       h,
+      style: {
+        fontFamily,
+        fontSize: Math.hypot(tx[2] || 0, tx[3] || 0) || height,
+        bold: flags.bold,
+        italic: flags.italic,
+        color: ink.color,
+        background: ink.background,
+      },
     });
     if (spans.length >= 400) break;
   }
@@ -97,6 +113,7 @@ async function pageFromPdf(pdf: PDFDocumentProxy, pageNumber: number): Promise<L
     previewUrl: canvas.toDataURL('image/jpeg', 0.85),
     width: canvas.width,
     height: canvas.height,
+    drawHeight: base.height,
     spans,
     imageBase64: thin ? canvasToJpegBase64(canvas, 1000) : undefined,
   };
@@ -126,6 +143,7 @@ async function pageFromImage(file: File): Promise<LoadedPage> {
       previewUrl: canvas.toDataURL('image/jpeg', 0.85),
       width: canvas.width,
       height: canvas.height,
+      drawHeight: canvas.height,
       spans: [],
       imageBase64: canvasToJpegBase64(canvas, 1000),
     };
